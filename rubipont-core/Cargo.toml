@@ -1,0 +1,11 @@
+[package]
+name = "rubipont-core"
+version = "0.1.0"
+edition = "2021"
+description = "Zero-copy LiDAR point cloud format translation — core library"
+
+[dependencies]
+las = "0.9"
+laz = "0.12"
+bytemuck = "1"
+thiserror = "2"
