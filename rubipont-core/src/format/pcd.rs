@@ -1,0 +1,336 @@
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::Path;
+
+use crate::error::{Result, RubipontError};
+use crate::layout::{PointChunk, PipelineContext, PointLayout};
+use crate::pipeline::{PointCloudReader, PointCloudWriter};
+
+/// Extension detection — called by the conversion pipeline dispatcher.
+pub fn detect(ext: &str) -> bool {
+    ext.eq_ignore_ascii_case("pcd")
+}
+
+/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
+const INTERNAL_POINT_SIZE: usize = 26;
+
+/// Metadata for each field in a PCD file.
+#[derive(Debug, Clone)]
+struct FieldDef {
+    name: String,
+    size: usize,
+    typ: FieldType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FieldType {
+    I, // signed integer
+    U, // unsigned integer
+    F, // float
+}
+
+/// Parse a PCD header field value (e.g., "FIELDS x y z" => ["x","y","z"]).
+fn parse_header_values(line: &str) -> Vec<String> {
+    line.split_whitespace().skip(1).map(|s| s.to_string()).collect()
+}
+
+/// Parse one f64 from a binary field given its size and type.
+fn read_field_as_f64(buf: &[u8], size: usize, typ: FieldType) -> f64 {
+    match (typ, size) {
+        (FieldType::F, 4) => f32::from_le_bytes(buf[..4].try_into().unwrap()) as f64,
+        (FieldType::F, 8) => f64::from_le_bytes(buf[..8].try_into().unwrap()),
+        (FieldType::U, 1) => buf[0] as f64,
+        (FieldType::U, 2) => u16::from_le_bytes(buf[..2].try_into().unwrap()) as f64,
+        (FieldType::U, 4) => u32::from_le_bytes(buf[..4].try_into().unwrap()) as f64,
+        (FieldType::U, 8) => u64::from_le_bytes(buf[..8].try_into().unwrap()) as f64,
+        (FieldType::I, 1) => buf[0] as i8 as f64,
+        (FieldType::I, 2) => i16::from_le_bytes(buf[..2].try_into().unwrap()) as f64,
+        (FieldType::I, 4) => i32::from_le_bytes(buf[..4].try_into().unwrap()) as f64,
+        (FieldType::I, 8) => i64::from_le_bytes(buf[..8].try_into().unwrap()) as f64,
+        _ => 0.0,
+    }
+}
+
+/// Read one u16 from a binary field (for intensity).
+fn read_field_as_u16(buf: &[u8], size: usize, typ: FieldType) -> u16 {
+    match (typ, size) {
+        (FieldType::U, 1) => buf[0] as u16,
+        (FieldType::U, 2) => u16::from_le_bytes(buf[..2].try_into().unwrap()),
+        (FieldType::U, 4) => (u32::from_le_bytes(buf[..4].try_into().unwrap()) & 0xFFFF) as u16,
+        (FieldType::F, 4) => f32::from_le_bytes(buf[..4].try_into().unwrap()) as u16,
+        (FieldType::F, 8) => f64::from_le_bytes(buf[..8].try_into().unwrap()) as u16,
+        _ => 0,
+    }
+}
+
+pub struct PcdReader {
+    reader: BufReader<std::fs::File>,
+    fields: Vec<FieldDef>,
+    total_point_size: usize,
+    num_points: u64,
+    points_read: u64,
+    layout: PointLayout,
+    metadata: PipelineContext,
+    is_binary: bool,
+    finished: bool,
+}
+
+impl PcdReader {
+    pub fn new(path: &Path) -> Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let mut reader = BufReader::new(file);
+
+        let mut field_names: Vec<String> = Vec::new();
+        let mut field_sizes: Vec<usize> = Vec::new();
+        let mut field_types: Vec<FieldType> = Vec::new();
+        let mut field_counts: Vec<usize> = Vec::new();
+        let mut num_points: u64 = 0;
+        let mut is_binary = false;
+
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line)? == 0 {
+                break;
+            }
+            let trimmed = line.trim();
+
+            if trimmed.starts_with("FIELDS") {
+                field_names = parse_header_values(trimmed);
+            } else if trimmed.starts_with("SIZE") {
+                field_sizes = parse_header_values(trimmed)
+                    .iter()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+            } else if trimmed.starts_with("TYPE") {
+                field_types = parse_header_values(trimmed)
+                    .iter()
+                    .filter_map(|s| match s.as_str() {
+                        "I" => Some(FieldType::I),
+                        "U" => Some(FieldType::U),
+                        "F" => Some(FieldType::F),
+                        _ => None,
+                    })
+                    .collect();
+            } else if trimmed.starts_with("COUNT") {
+                field_counts = parse_header_values(trimmed)
+                    .iter()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+            } else if trimmed.starts_with("POINTS") {
+                num_points = trimmed
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            } else if trimmed.starts_with("DATA") {
+                let mode = trimmed.split_whitespace().nth(1).unwrap_or("ascii");
+                is_binary = mode.eq_ignore_ascii_case("binary")
+                    || mode.eq_ignore_ascii_case("binary_compressed");
+                break;
+            }
+        }
+
+        // Build field definitions
+        let field_count = field_names.len();
+        let fields: Vec<FieldDef> = (0..field_count)
+            .map(|i| FieldDef {
+                name: field_names.get(i).cloned().unwrap_or_default(),
+                size: field_sizes.get(i).copied().unwrap_or(1) * field_counts.get(i).copied().unwrap_or(1),
+                typ: field_types.get(i).copied().unwrap_or(FieldType::F),
+            })
+            .collect();
+
+        let total_point_size: usize = fields.iter().map(|f| f.size).sum();
+
+        Ok(Self {
+            reader,
+            fields,
+            total_point_size,
+            num_points,
+            points_read: 0,
+            layout: PointLayout {
+                point_size: total_point_size,
+                num_points,
+                has_integer_coords: false,
+            },
+            metadata: PipelineContext::default(),
+            is_binary,
+            finished: false,
+        })
+    }
+
+    /// Find the index and definition of a field by name.
+    fn find_field(&self, name: &str) -> Option<(usize, &FieldDef)> {
+        self.fields.iter().enumerate().find(|(_, f)| f.name == name)
+    }
+}
+
+impl PointCloudReader for PcdReader {
+    fn read_chunk(&mut self) -> Result<Option<PointChunk>> {
+        if self.finished {
+            return Ok(None);
+        }
+
+        if !self.is_binary {
+            // ASCII mode — parse line by line
+            let mut data = Vec::new();
+            let mut count = 0usize;
+            let mut line = String::new();
+
+            while count < 4096 {
+                line.clear();
+                if self.reader.read_line(&mut line)? == 0 {
+                    break;
+                }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                let vals: Vec<f64> = trimmed
+                    .split_whitespace()
+                    .filter_map(|s| s.parse::<f64>().ok())
+                    .collect();
+
+                let x = *vals.first().unwrap_or(&0.0);
+                let y = *vals.get(1).unwrap_or(&0.0);
+                let z = *vals.get(2).unwrap_or(&0.0);
+                let intensity = vals.get(3).copied().unwrap_or(0.0) as u16;
+
+                data.extend_from_slice(&x.to_le_bytes());
+                data.extend_from_slice(&y.to_le_bytes());
+                data.extend_from_slice(&z.to_le_bytes());
+                data.extend_from_slice(&intensity.to_le_bytes());
+                count += 1;
+            }
+
+            if count == 0 {
+                self.finished = true;
+                return Ok(None);
+            }
+            return Ok(Some(PointChunk { data, len: count }));
+        }
+
+        // Binary mode
+        let remaining = self.num_points.saturating_sub(self.points_read);
+        let chunk_points = 4096usize.min(remaining as usize);
+        if chunk_points == 0 {
+            self.finished = true;
+            return Ok(None);
+        }
+
+        let chunk_bytes = chunk_points * self.total_point_size;
+        let mut raw = vec![0u8; chunk_bytes];
+        self.reader.read_exact(&mut raw).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                RubipontError::ParseError {
+                    format: "PCD".into(),
+                    offset: self.points_read,
+                    detail: "unexpected EOF".into(),
+                }
+            } else {
+                RubipontError::Io(e)
+            }
+        })?;
+
+        // Locate x, y, z, intensity field offsets within the point record
+        let x_info = self.find_field("x");
+        let y_info = self.find_field("y");
+        let z_info = self.find_field("z");
+        let intensity_info = self.find_field("intensity");
+
+        let mut data = vec![0u8; chunk_points * INTERNAL_POINT_SIZE];
+        for i in 0..chunk_points {
+            let pt_offset = i * self.total_point_size;
+
+            // Parse x
+            if let Some((idx, def)) = &x_info {
+                let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
+                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let start = i * INTERNAL_POINT_SIZE;
+                data[start..start + 8].copy_from_slice(&val.to_le_bytes());
+            }
+
+            // Parse y
+            if let Some((idx, def)) = &y_info {
+                let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
+                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let start = i * INTERNAL_POINT_SIZE + 8;
+                data[start..start + 8].copy_from_slice(&val.to_le_bytes());
+            }
+
+            // Parse z
+            if let Some((idx, def)) = &z_info {
+                let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
+                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let start = i * INTERNAL_POINT_SIZE + 16;
+                data[start..start + 8].copy_from_slice(&val.to_le_bytes());
+            }
+
+            // Parse intensity
+            if let Some((idx, def)) = &intensity_info {
+                let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
+                let val = read_field_as_u16(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let start = i * INTERNAL_POINT_SIZE + 24;
+                data[start..start + 2].copy_from_slice(&val.to_le_bytes());
+            }
+        }
+
+        self.points_read += chunk_points as u64;
+        if self.points_read >= self.num_points {
+            self.finished = true;
+        }
+
+        Ok(Some(PointChunk {
+            data,
+            len: chunk_points,
+        }))
+    }
+
+    fn layout(&self) -> &PointLayout {
+        &self.layout
+    }
+
+    fn metadata(&self) -> &PipelineContext {
+        &self.metadata
+    }
+}
+
+pub struct PcdWriter {
+    file: std::fs::File,
+    point_count: u64,
+}
+
+impl PcdWriter {
+    pub fn new(path: &Path, layout: &PointLayout, _metadata: &PipelineContext) -> Result<Self> {
+        let mut file = std::fs::File::create(path)?;
+        writeln!(file, "VERSION 0.7")?;
+        writeln!(file, "FIELDS x y z intensity")?;
+        writeln!(file, "SIZE 8 8 8 2")?;
+        writeln!(file, "TYPE F F F U")?;
+        writeln!(file, "COUNT 1 1 1 1")?;
+        writeln!(file, "WIDTH {}", layout.num_points)?;
+        writeln!(file, "HEIGHT 1")?;
+        writeln!(file, "VIEWPOINT 0 0 0 1 0 0 0")?;
+        writeln!(file, "POINTS {}", layout.num_points)?;
+        writeln!(file, "DATA binary")?;
+        file.flush()?;
+
+        Ok(Self {
+            file,
+            point_count: 0,
+        })
+    }
+}
+
+impl PointCloudWriter for PcdWriter {
+    fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
+        self.file.write_all(&chunk.data)?;
+        self.point_count += chunk.len as u64;
+        Ok(())
+    }
+
+    fn finalize(&mut self) -> Result<()> {
+        self.file.sync_all()?;
+        Ok(())
+    }
+}

@@ -1,6 +1,7 @@
 // rubipont-core memory layout helpers
 
 /// Layout description for a point cloud in memory
+#[derive(Clone)]
 pub struct PointLayout {
     /// Size of a single point in bytes
     pub point_size: usize,
@@ -19,7 +20,7 @@ pub struct PointChunk {
 }
 
 /// Pipeline-level context/metadata carried between stages
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct PipelineContext {
     /// Scale factors for coordinate conversion
     pub coordinate_scale: Option<(f64, f64, f64)>,
