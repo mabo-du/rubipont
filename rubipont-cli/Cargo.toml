@@ -1,0 +1,13 @@
+[package]
+name = "rubipont-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for rubipont LiDAR format translation"
+
+[[bin]]
+name = "rp"
+path = "src/main.rs"
+
+[dependencies]
+rubipont-core = { path = "../rubipont-core" }
+clap = { version = "4", features = ["derive"] }
