@@ -330,6 +330,7 @@ name = "rubipont-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "las",
  "rubipont-core",
 ]
 

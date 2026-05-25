@@ -11,3 +11,6 @@ path = "src/main.rs"
 [dependencies]
 rubipont-core = { path = "../rubipont-core" }
 clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+las = "0.9"
