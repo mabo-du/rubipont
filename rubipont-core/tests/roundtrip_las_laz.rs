@@ -1,5 +1,4 @@
 use rubipont_core::pipeline::convert;
-use std::io::{Read, Seek};
 
 #[test]
 fn las_to_laz_to_las_roundtrip() {
@@ -28,9 +27,7 @@ fn las_to_laz_to_las_roundtrip() {
         writer.close().unwrap();
     }
 
-    let src_size = std::fs::metadata(&src).unwrap().len();
-
-    // LAS -> LAZ (should compress)
+    // LAS -> LAZ
     convert(&src, &mid).unwrap();
     let mid_size = std::fs::metadata(&mid).unwrap().len();
     // LAZ writes compressed bytes but no LAS header — it will be smaller
