@@ -1,4 +1,6 @@
 use std::path::Path;
+use std::io::{Seek, SeekFrom, Write};
+use byteorder::{LittleEndian, WriteBytesExt};
 
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
@@ -141,22 +143,85 @@ impl LazWriter {
         _layout: &PointLayout,
         metadata: &PipelineContext,
     ) -> Result<Self> {
-        let file = std::fs::File::create(path)?;
+        let mut file = std::fs::File::create(path)?;
 
-        let items = laz::LazItemRecordBuilder::new()
-            .add_item(laz::LazItemType::Point10)
-            .build();
+        let scale = metadata.coordinate_scale.unwrap_or((0.01, 0.01, 0.01));
+        let offset = metadata.coordinate_offset.unwrap_or((0.0, 0.0, 0.0));
 
-        let compressor = laz::LasZipCompressor::from_laz_items(file, items).map_err(|e| {
+        // Build LAZ items for Point Format 0
+        let laz_vlr = {
+            let items = laz::LazItemRecordBuilder::new()
+                .add_item(laz::LazItemType::Point10)
+                .build();
+            laz::LazVlr::from_laz_items(items)
+        };
+
+        // Build a LAS header with the LAZ VLR embedded in the VLR list.
+        // We write the point format as uncompressed (0), then patch the
+        // compressed bit (bit 7) in the raw header bytes afterwards.
+        // This avoids the las crate rejecting compressed formats when built
+        // without the "laz" feature.
+        let mut builder = las::Builder::from((1, 4)); // LAS 1.4
+        builder.point_format = las::point::Format::new(0).unwrap();
+        builder.transforms = las::Vector {
+            x: las::Transform { scale: scale.0, offset: offset.0 },
+            y: las::Transform { scale: scale.1, offset: offset.1 },
+            z: las::Transform { scale: scale.2, offset: offset.2 },
+        };
+
+        // Serialize the LAZ VLR and add it to the header's VLR list
+        let mut vlr_data = Vec::new();
+        laz_vlr.write_to(&mut vlr_data).map_err(|e| {
+            RubipontError::Io(e)
+        })?;
+        builder.vlrs.push(las::Vlr {
+            user_id: "laszip encoded".to_string(),
+            record_id: 22204,
+            description: String::new(),
+            data: vlr_data,
+        });
+
+        let header = builder.into_header().map_err(|e| {
+            RubipontError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
+
+        // Write the LAS header (including VLRs) to the file
+        header.write_to(&mut file).map_err(|e| {
+            RubipontError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
+
+        // Patch the point data record format byte to set the
+        // compressed flag (bit 7). This byte is at offset 104
+        // in a LAS 1.4 header.
+        // Save the current position (= offset_to_point_data) first.
+        let data_start = file.stream_position().map_err(|e| {
+            RubipontError::Io(e)
+        })?;
+        file.seek(SeekFrom::Start(104)).map_err(|e| {
+            RubipontError::Io(e)
+        })?;
+        file.write_all(&[0x80]).map_err(|e| {
+            RubipontError::Io(e)
+        })?;
+        // Seek back to the point data start position
+        file.seek(SeekFrom::Start(data_start)).map_err(|e| {
+            RubipontError::Io(e)
+        })?;
+
+        // Create the LAZ compressor at the current position (right after VLRs)
+        let compressor = laz::LasZipCompressor::new(file, laz_vlr).map_err(|e| {
             RubipontError::ParseError {
                 format: "LAZ".into(),
                 offset: 0,
                 detail: e.to_string(),
             }
         })?;
-
-        let scale = metadata.coordinate_scale.unwrap_or((0.01, 0.01, 0.01));
-        let offset = metadata.coordinate_offset.unwrap_or((0.0, 0.0, 0.0));
 
         Ok(Self {
             compressor,
@@ -219,6 +284,27 @@ impl PointCloudWriter for LazWriter {
                 detail: e.to_string(),
             }
         })?;
+
+        // Update the LAS header with the actual point count
+        // LAS 1.4 stores u64 count at offset 247, legacy u32 at offset 107
+        {
+            let file = self.compressor.get_mut();
+            // Legacy u32 number_of_point_records at offset 107
+            file.seek(SeekFrom::Start(107)).map_err(|e| {
+                RubipontError::Io(e)
+            })?;
+            file.write_u32::<LittleEndian>(self.point_count as u32).map_err(|e| {
+                RubipontError::Io(e)
+            })?;
+            // LAS 1.4 u64 number_of_point_records at offset 247
+            file.seek(SeekFrom::Start(247)).map_err(|e| {
+                RubipontError::Io(e)
+            })?;
+            file.write_u64::<LittleEndian>(self.point_count).map_err(|e| {
+                RubipontError::Io(e)
+            })?;
+        }
+
         Ok(())
     }
 }
