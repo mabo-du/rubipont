@@ -43,6 +43,7 @@ pub fn convert(input: &Path, output: &Path) -> std::result::Result<(), RubipontE
         e if format::laz::detect(e) => Box::new(format::laz::LazReader::new(input)?),
         e if format::pcd::detect(e) => Box::new(format::pcd::PcdReader::new(input)?),
         e if format::e57::detect(e) => Box::new(format::e57::E57ReaderImpl::new(input)?),
+        e if format::mcap::detect(e) => Box::new(format::mcap::McapReader::new(input)?),
         _ => return Err(RubipontError::UnsupportedFormat(ext.into())),
     };
 
