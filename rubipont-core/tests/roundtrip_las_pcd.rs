@@ -28,11 +28,11 @@ fn las_to_pcd_to_las_roundtrip() {
     }
 
     // Convert LAS -> PCD
-    convert(&src, &mid).unwrap();
+    convert(&src, &mid, None).unwrap();
     assert!(mid.exists());
 
     // Convert PCD -> LAS
-    convert(&mid, &dst).unwrap();
+    convert(&mid, &dst, None).unwrap();
     assert!(dst.exists());
 
     // Verify destination has same number of points

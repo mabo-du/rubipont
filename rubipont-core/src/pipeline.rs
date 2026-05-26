@@ -24,6 +24,7 @@ pub trait PointCloudWriter {
 use std::path::Path;
 use crate::error::RubipontError;
 use crate::format;
+use crate::transform;
 
 /// Extract the file extension from a path.
 pub fn extension(path: &Path) -> &str {
@@ -33,8 +34,15 @@ pub fn extension(path: &Path) -> &str {
 }
 
 /// Convert a point cloud file between formats.
-/// Dispatches reader/writer by file extension.
-pub fn convert(input: &Path, output: &Path) -> std::result::Result<(), RubipontError> {
+///
+/// Dispatches reader/writer by file extension.  When `target_epsg` is
+/// `Some(…)`, coordinates are reprojected from the source CRS (derived
+/// from metadata) to the target EPSG code during the read phase.
+pub fn convert(
+    input: &Path,
+    output: &Path,
+    target_epsg: Option<u32>,
+) -> std::result::Result<(), RubipontError> {
     let ext = extension(input);
     let out_ext = extension(output);
 
@@ -62,7 +70,37 @@ pub fn convert(input: &Path, output: &Path) -> std::result::Result<(), RubipontE
     };
 
     while let Some(chunk) = reader.read_chunk()? {
-        writer.write_chunk(&chunk)?;
+        if let Some(tgt) = target_epsg {
+            // Reproject points in this chunk
+            let src_epsg = transform::source_epsg_from_crs_wkt(meta.crs_wkt.as_deref());
+            let ps = layout.point_size;
+            let mut data = chunk.data;
+
+            for i in 0..chunk.len {
+                let off = i * ps;
+                // x, y, z occupy the first 24 bytes of each point
+                if off + 24 <= data.len() {
+                    let x = f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+                    let y = f64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+                    let z = f64::from_le_bytes(data[off + 16..off + 24].try_into().unwrap());
+
+                    if let Ok((tx, ty, tz)) =
+                        transform::transform_coords(x, y, z, src_epsg, Some(tgt))
+                    {
+                        data[off..off + 8].copy_from_slice(&tx.to_le_bytes());
+                        data[off + 8..off + 16].copy_from_slice(&ty.to_le_bytes());
+                        data[off + 16..off + 24].copy_from_slice(&tz.to_le_bytes());
+                    }
+                }
+            }
+
+            writer.write_chunk(&PointChunk {
+                data,
+                len: chunk.len,
+            })?;
+        } else {
+            writer.write_chunk(&chunk)?;
+        }
     }
 
     writer.finalize()?;

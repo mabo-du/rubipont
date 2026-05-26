@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["mcap-io"]
 mcap-io = ["rubipont-core/mcap-io"]
+proj = ["rubipont-core/proj"]
 
 [dependencies]
 rubipont-core = { path = "../rubipont-core" }

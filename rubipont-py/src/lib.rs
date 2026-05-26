@@ -4,7 +4,7 @@ use std::path::Path;
 /// Convert a point cloud file between formats.
 #[pyfunction]
 fn convert(input: String, output: String) -> PyResult<()> {
-    rubipont_core::pipeline::convert(Path::new(&input), Path::new(&output))
+    rubipont_core::pipeline::convert(Path::new(&input), Path::new(&output), None)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
 

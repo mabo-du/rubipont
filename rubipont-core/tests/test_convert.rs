@@ -3,7 +3,7 @@ use std::path::Path;
 
 #[test]
 fn convert_rejects_unsupported_input() {
-    let result = convert(Path::new("test.xyz"), Path::new("output.las"));
+    let result = convert(Path::new("test.xyz"), Path::new("output.las"), None);
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(err.contains("xyz"), "Error should mention format: {}", err);
@@ -11,7 +11,7 @@ fn convert_rejects_unsupported_input() {
 
 #[test]
 fn convert_rejects_unsupported_output() {
-    let result = convert(Path::new("test.las"), Path::new("output.xyz"));
+    let result = convert(Path::new("test.las"), Path::new("output.xyz"), None);
     assert!(result.is_err());
 }
 
@@ -42,7 +42,7 @@ fn convert_las_to_pcd() {
     }
 
     // Convert LAS -> PCD via pipeline
-    convert(&src, &dst).unwrap();
+    convert(&src, &dst, None).unwrap();
     assert!(dst.exists(), "PCD output should exist");
 
     std::fs::remove_file(&src).ok();

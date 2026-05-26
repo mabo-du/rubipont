@@ -28,13 +28,13 @@ fn las_to_laz_to_las_roundtrip() {
     }
 
     // LAS -> LAZ
-    convert(&src, &mid).unwrap();
+    convert(&src, &mid, None).unwrap();
     let mid_size = std::fs::metadata(&mid).unwrap().len();
     // LAZ writes compressed bytes but no LAS header — it will be smaller
     assert!(mid_size > 0, "LAZ output should exist");
 
     // LAZ -> LAS
-    convert(&mid, &dst).unwrap();
+    convert(&mid, &dst, None).unwrap();
     assert!(dst.exists());
     let dst_header =
         las::Header::new(&mut std::fs::File::open(&dst).unwrap()).unwrap();

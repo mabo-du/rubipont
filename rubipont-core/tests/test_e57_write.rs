@@ -27,7 +27,7 @@ fn e57_write_las_to_e57() {
     }
 
     // Convert LAS -> E57
-    pipeline::convert(&src, &dst).unwrap();
+    pipeline::convert(&src, &dst, None).unwrap();
     assert!(dst.exists());
 
     // Read back via e57 reader to verify
@@ -69,8 +69,8 @@ fn e57_roundtrip_las_e57_las() {
     }
 
     // LAS -> E57 -> LAS roundtrip
-    pipeline::convert(&src, &mid).unwrap();
-    pipeline::convert(&mid, &dst).unwrap();
+    pipeline::convert(&src, &mid, None).unwrap();
+    pipeline::convert(&mid, &dst, None).unwrap();
 
     let dst_header = las::Header::new(&mut std::fs::File::open(&dst).unwrap()).unwrap();
     assert_eq!(dst_header.number_of_points(), 10);
