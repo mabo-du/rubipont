@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Zero-copy LiDAR point cloud format translation — core library"
 
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [features]
 default = ["mcap-io"]
 mcap-io = ["dep:mcap", "dep:rosbag"]

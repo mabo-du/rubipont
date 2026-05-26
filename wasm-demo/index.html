@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>rubipont — LiDAR Format Translator (WASM Demo)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { color: #c44; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
+  pre { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+  .supported { color: #080; font-weight: bold; }
+  .unsupported { color: #888; }
+  #status { padding: 0.5rem; border-radius: 4px; margin: 0.5rem 0; }
+  #status.done { background: #dfd; }
+  #status.error { background: #fdd; }
+  #status.loading { background: #ffd; }
+</style>
+</head>
+<body>
+<h1>rubipont ⚡</h1>
+<p><em>Zero-copy LiDAR format translation in your browser.</em></p>
+
+<div class="card">
+  <h2>WASM Demo</h2>
+  <p>Status: <span id="status">Initialising...</span></p>
+  <p>Supported formats: 
+    <span class="supported">LAS, LAZ, PCD, E57</span>
+    <span class="unsupported">(MCAP, ROS bag excluded in WASM build)</span>
+  </p>
+  <p>This demo shows that rubipont compiles and runs in the browser via WASM.
+     For full file I/O with LAS/PCD/E57 files, use the <code>rp</code> CLI.</p>
+</div>
+
+<div class="card">
+  <h2>Build Info</h2>
+  <pre id="info">Loading...</pre>
+</div>
+
+<script type="module">
+  import init, { formats } from './pkg/rubipont_core.js';
+
+  async function main() {
+    const status = document.getElementById('status');
+    const info = document.getElementById('info');
+
+    try {
+      status.textContent = 'Loading WASM module...';
+      status.className = 'loading';
+
+      await init();
+
+      status.textContent = 'WASM module loaded successfully!';
+      status.className = 'done';
+
+      const fmtList = formats();
+      info.textContent = `WASM module: rubipont-core\n` +
+        `Supported formats detected:\n` +
+        fmtList.map(f => `  • ${f}`).join('\n') + '\n\n' +
+        `To convert files, use the rp CLI tool:\n` +
+        `  $ rp convert input.las output.pcd`;
+
+    } catch (err) {
+      status.textContent = `Error: ${err.message}`;
+      status.className = 'error';
+      info.textContent = err.stack;
+    }
+  }
+
+  main();
+</script>
+</body>
+</html>
