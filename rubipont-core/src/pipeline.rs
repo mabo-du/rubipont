@@ -24,6 +24,7 @@ pub trait PointCloudWriter {
 use std::path::Path;
 use crate::error::RubipontError;
 use crate::format;
+use crate::array::read_array;
 use crate::transform;
 
 /// Extract the file extension from a path.
@@ -72,27 +73,24 @@ pub fn convert(
     };
 
     while let Some(chunk) = reader.read_chunk()? {
-        if let Some(tgt) = target_epsg {
+        if let Some(tgt_epsg) = target_epsg {
             // Reproject points in this chunk
             let src_epsg = transform::source_epsg_from_crs_wkt(meta.crs_wkt.as_deref());
             let ps = layout.point_size;
             let mut data = chunk.data;
 
             for i in 0..chunk.len {
-                let off = i * ps;
-                // x, y, z occupy the first 24 bytes of each point
-                if off + 24 <= data.len() {
-                    let x = f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
-                    let y = f64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
-                    let z = f64::from_le_bytes(data[off + 16..off + 24].try_into().unwrap());
+                let offset = i * 26;
+                let x = f64::from_le_bytes(read_array(&data, offset)?);
+                let y = f64::from_le_bytes(read_array(&data, offset + 8)?);
+                let z = f64::from_le_bytes(read_array(&data, offset + 16)?);
 
-                    if let Ok((tx, ty, tz)) =
-                        transform::transform_coords(x, y, z, src_epsg, Some(tgt))
-                    {
-                        data[off..off + 8].copy_from_slice(&tx.to_le_bytes());
-                        data[off + 8..off + 16].copy_from_slice(&ty.to_le_bytes());
-                        data[off + 16..off + 24].copy_from_slice(&tz.to_le_bytes());
-                    }
+                if let Ok((tx, ty, tz)) =
+                    transform::transform_coords(x, y, z, src_epsg, Some(tgt_epsg))
+                {
+                    data[offset..offset + 8].copy_from_slice(&tx.to_le_bytes());
+                    data[offset + 8..offset + 16].copy_from_slice(&ty.to_le_bytes());
+                    data[offset + 16..offset + 24].copy_from_slice(&tz.to_le_bytes());
                 }
             }
 

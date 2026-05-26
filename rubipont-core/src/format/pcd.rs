@@ -33,32 +33,45 @@ fn parse_header_values(line: &str) -> Vec<String> {
     line.split_whitespace().skip(1).map(|s| s.to_string()).collect()
 }
 
+/// Helper: read N bytes from buf and return them as a fixed-size array.
+fn read_n<const N: usize>(buf: &[u8]) -> Result<[u8; N]> {
+    if buf.len() < N {
+        return Err(RubipontError::ParseError {
+            format: "PCD".into(), offset: 0,
+            detail: format!("Expected {} bytes, got {}", N, buf.len()),
+        });
+    }
+    let mut arr = [0u8; N];
+    arr.copy_from_slice(&buf[..N]);
+    Ok(arr)
+}
+
 /// Parse one f64 from a binary field given its size and type.
-fn read_field_as_f64(buf: &[u8], size: usize, typ: FieldType) -> f64 {
+fn read_field_as_f64(buf: &[u8], size: usize, typ: FieldType) -> Result<f64> {
     match (typ, size) {
-        (FieldType::F, 4) => f32::from_le_bytes(buf[..4].try_into().unwrap()) as f64,
-        (FieldType::F, 8) => f64::from_le_bytes(buf[..8].try_into().unwrap()),
-        (FieldType::U, 1) => buf[0] as f64,
-        (FieldType::U, 2) => u16::from_le_bytes(buf[..2].try_into().unwrap()) as f64,
-        (FieldType::U, 4) => u32::from_le_bytes(buf[..4].try_into().unwrap()) as f64,
-        (FieldType::U, 8) => u64::from_le_bytes(buf[..8].try_into().unwrap()) as f64,
-        (FieldType::I, 1) => buf[0] as i8 as f64,
-        (FieldType::I, 2) => i16::from_le_bytes(buf[..2].try_into().unwrap()) as f64,
-        (FieldType::I, 4) => i32::from_le_bytes(buf[..4].try_into().unwrap()) as f64,
-        (FieldType::I, 8) => i64::from_le_bytes(buf[..8].try_into().unwrap()) as f64,
-        _ => 0.0,
+        (FieldType::F, 4) => Ok(f32::from_le_bytes(read_n(buf)?) as f64),
+        (FieldType::F, 8) => Ok(f64::from_le_bytes(read_n(buf)?)),
+        (FieldType::U, 1) => Ok(buf[0] as f64),
+        (FieldType::U, 2) => Ok(u16::from_le_bytes(read_n(buf)?) as f64),
+        (FieldType::U, 4) => Ok(u32::from_le_bytes(read_n(buf)?) as f64),
+        (FieldType::U, 8) => Ok(u64::from_le_bytes(read_n(buf)?) as f64),
+        (FieldType::I, 1) => Ok(buf[0] as i8 as f64),
+        (FieldType::I, 2) => Ok(i16::from_le_bytes(read_n(buf)?) as f64),
+        (FieldType::I, 4) => Ok(i32::from_le_bytes(read_n(buf)?) as f64),
+        (FieldType::I, 8) => Ok(i64::from_le_bytes(read_n(buf)?) as f64),
+        _ => Ok(0.0),
     }
 }
 
 /// Read one u16 from a binary field (for intensity).
-fn read_field_as_u16(buf: &[u8], size: usize, typ: FieldType) -> u16 {
+fn read_field_as_u16(buf: &[u8], size: usize, typ: FieldType) -> Result<u16> {
     match (typ, size) {
-        (FieldType::U, 1) => buf[0] as u16,
-        (FieldType::U, 2) => u16::from_le_bytes(buf[..2].try_into().unwrap()),
-        (FieldType::U, 4) => (u32::from_le_bytes(buf[..4].try_into().unwrap()) & 0xFFFF) as u16,
-        (FieldType::F, 4) => f32::from_le_bytes(buf[..4].try_into().unwrap()) as u16,
-        (FieldType::F, 8) => f64::from_le_bytes(buf[..8].try_into().unwrap()) as u16,
-        _ => 0,
+        (FieldType::U, 1) => Ok(buf[0] as u16),
+        (FieldType::U, 2) => Ok(u16::from_le_bytes(read_n(buf)?)),
+        (FieldType::U, 4) => Ok((u32::from_le_bytes(read_n(buf)?) & 0xFFFF) as u16),
+        (FieldType::F, 4) => Ok(f32::from_le_bytes(read_n(buf)?) as u16),
+        (FieldType::F, 8) => Ok(f64::from_le_bytes(read_n(buf)?) as u16),
+        _ => Ok(0),
     }
 }
 
@@ -245,7 +258,7 @@ impl PointCloudReader for PcdReader {
             // Parse x
             if let Some((idx, def)) = &x_info {
                 let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
-                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ)?;
                 let start = i * INTERNAL_POINT_SIZE;
                 data[start..start + 8].copy_from_slice(&val.to_le_bytes());
             }
@@ -253,7 +266,7 @@ impl PointCloudReader for PcdReader {
             // Parse y
             if let Some((idx, def)) = &y_info {
                 let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
-                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ)?;
                 let start = i * INTERNAL_POINT_SIZE + 8;
                 data[start..start + 8].copy_from_slice(&val.to_le_bytes());
             }
@@ -261,7 +274,7 @@ impl PointCloudReader for PcdReader {
             // Parse z
             if let Some((idx, def)) = &z_info {
                 let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
-                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let val = read_field_as_f64(&raw[pt_offset + field_offset..], def.size, def.typ)?;
                 let start = i * INTERNAL_POINT_SIZE + 16;
                 data[start..start + 8].copy_from_slice(&val.to_le_bytes());
             }
@@ -269,7 +282,7 @@ impl PointCloudReader for PcdReader {
             // Parse intensity
             if let Some((idx, def)) = &intensity_info {
                 let field_offset: usize = self.fields[..*idx].iter().map(|f| f.size).sum();
-                let val = read_field_as_u16(&raw[pt_offset + field_offset..], def.size, def.typ);
+                let val = read_field_as_u16(&raw[pt_offset + field_offset..], def.size, def.typ)?;
                 let start = i * INTERNAL_POINT_SIZE + 24;
                 data[start..start + 2].copy_from_slice(&val.to_le_bytes());
             }

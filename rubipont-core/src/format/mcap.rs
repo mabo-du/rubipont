@@ -266,12 +266,11 @@ fn extract_points_from_pointcloud2(data: &[u8]) -> Result<Vec<(f64, f64, f64, u1
 fn read_u32_le(data: &[u8], offset: &mut usize) -> Result<u32> {
     if *offset + 4 > data.len() {
         return Err(RubipontError::ParseError {
-            format: "MCAP".into(),
-            offset: *offset as u64,
-            detail: "Unexpected end of data while reading u32".into(),
+            format: "MCAP".into(), offset: *offset as u64,
+            detail: "Unexpected end of data".into(),
         });
     }
-    let val = u32::from_le_bytes(data[*offset..*offset + 4].try_into().unwrap());
+    let val = crate::array::read_u32_unchecked(data, *offset);
     *offset += 4;
     Ok(val)
 }

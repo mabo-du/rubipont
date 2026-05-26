@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
 use crate::pipeline::{PointCloudReader, PointCloudWriter};
+use crate::array::read_array;
 
 /// Extension detection — called by the conversion pipeline dispatcher.
 pub fn detect(ext: &str) -> bool {
@@ -167,17 +168,13 @@ impl LasWriter {
 
 impl PointCloudWriter for LasWriter {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
-        let point_size = 26usize; // 3×f64 (8 each) + u16 (2) = 26 bytes
+        let point_size = 26usize; // 3xf64 (8 each) + u16 (2) = 26 bytes
         for i in 0..chunk.len {
             let offset = i * point_size;
-            let x = f64::from_le_bytes(chunk.data[offset..offset + 8].try_into().unwrap());
-            let y =
-                f64::from_le_bytes(chunk.data[offset + 8..offset + 16].try_into().unwrap());
-            let z =
-                f64::from_le_bytes(chunk.data[offset + 16..offset + 24].try_into().unwrap());
-            let intensity = u16::from_le_bytes(
-                chunk.data[offset + 24..offset + 26].try_into().unwrap(),
-            );
+            let x = f64::from_le_bytes(read_array(&chunk.data, offset)?);
+            let y = f64::from_le_bytes(read_array(&chunk.data, offset + 8)?);
+            let z = f64::from_le_bytes(read_array(&chunk.data, offset + 16)?);
+            let intensity = u16::from_le_bytes(read_array(&chunk.data, offset + 24)?);
 
             let pt = las::Point {
                 x,

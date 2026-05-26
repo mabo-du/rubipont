@@ -6,6 +6,7 @@ use e57::{CartesianCoordinate, E57Reader, PointCloud};
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
 use crate::pipeline::{PointCloudReader, PointCloudWriter};
+use crate::array::read_array;
 
 /// Extension detection — called by the conversion pipeline dispatcher.
 pub fn detect(ext: &str) -> bool {
@@ -223,15 +224,13 @@ impl E57WriterImpl {
 
 impl PointCloudWriter for E57WriterImpl {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
-        let point_size: usize = 26; // 3×f64 (24 bytes) + u16 (2 bytes)
+        let point_size = 26usize;
         for i in 0..chunk.len {
             let offset = i * point_size;
-            let x = f64::from_le_bytes(chunk.data[offset..offset + 8].try_into().unwrap());
-            let y = f64::from_le_bytes(chunk.data[offset + 8..offset + 16].try_into().unwrap());
-            let z = f64::from_le_bytes(chunk.data[offset + 16..offset + 24].try_into().unwrap());
-            let intensity = u16::from_le_bytes(
-                chunk.data[offset + 24..offset + 26].try_into().unwrap(),
-            );
+            let x = f64::from_le_bytes(read_array(&chunk.data, offset)?);
+            let y = f64::from_le_bytes(read_array(&chunk.data, offset + 8)?);
+            let z = f64::from_le_bytes(read_array(&chunk.data, offset + 16)?);
+            let intensity = u16::from_le_bytes(read_array(&chunk.data, offset + 24)?);
             self.points.push((x, y, z, intensity));
         }
         self.point_count += chunk.len as u64;

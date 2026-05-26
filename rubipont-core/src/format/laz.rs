@@ -2,6 +2,7 @@ use std::path::Path;
 use std::io::{Seek, SeekFrom, Write};
 use byteorder::{LittleEndian, WriteBytesExt};
 
+use crate::array::read_array;
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
 use crate::pipeline::{PointCloudReader, PointCloudWriter};
@@ -86,10 +87,10 @@ impl PointCloudReader for LazReader {
                     // [4..8]: Y as i32
                     // [8..12]: Z as i32
                     // [12..14]: intensity as u16
-                    let x_i32 = i32::from_le_bytes(raw[0..4].try_into().unwrap());
-                    let y_i32 = i32::from_le_bytes(raw[4..8].try_into().unwrap());
-                    let z_i32 = i32::from_le_bytes(raw[8..12].try_into().unwrap());
-                    let intensity = u16::from_le_bytes(raw[12..14].try_into().unwrap());
+                    let x_i32 = i32::from_le_bytes(read_array(raw, 0)?);
+                    let y_i32 = i32::from_le_bytes(read_array(raw, 4)?);
+                    let z_i32 = i32::from_le_bytes(read_array(raw, 8)?);
+                    let intensity = u16::from_le_bytes(read_array(raw, 12)?);
 
                     // Convert scaled integers to f64
                     let x = x_i32 as f64 * self.scale.0 + self.offset.0;
@@ -162,7 +163,10 @@ impl LazWriter {
         // This avoids the las crate rejecting compressed formats when built
         // without the "laz" feature.
         let mut builder = las::Builder::from((1, 4)); // LAS 1.4
-        builder.point_format = las::point::Format::new(0).unwrap();
+        builder.point_format = las::point::Format::new(0)
+            .map_err(|e| RubipontError::ParseError {
+                format: "LAZ".into(), offset: 0, detail: e.to_string(),
+            })?;
         builder.transforms = las::Vector {
             x: las::Transform { scale: scale.0, offset: offset.0 },
             y: las::Transform { scale: scale.1, offset: offset.1 },
@@ -241,14 +245,10 @@ impl PointCloudWriter for LazWriter {
             }
 
             // Read our internal f64 format
-            let x = f64::from_le_bytes(chunk.data[offset..offset + 8].try_into().unwrap());
-            let y =
-                f64::from_le_bytes(chunk.data[offset + 8..offset + 16].try_into().unwrap());
-            let z =
-                f64::from_le_bytes(chunk.data[offset + 16..offset + 24].try_into().unwrap());
-            let intensity = u16::from_le_bytes(
-                chunk.data[offset + 24..offset + 26].try_into().unwrap(),
-            );
+            let x = f64::from_le_bytes(read_array(&chunk.data, offset)?);
+            let y = f64::from_le_bytes(read_array(&chunk.data, offset + 8)?);
+            let z = f64::from_le_bytes(read_array(&chunk.data, offset + 16)?);
+            let intensity = u16::from_le_bytes(read_array(&chunk.data, offset + 24)?);
 
             // Convert to LAS Point Format 0 raw bytes (20 bytes)
             let x_i32 = ((x - self.offset.0) / self.scale.0) as i32;
