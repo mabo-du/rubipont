@@ -5,7 +5,7 @@ use e57::{CartesianCoordinate, E57Reader, PointCloud};
 
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
-use crate::pipeline::PointCloudReader;
+use crate::pipeline::{PointCloudReader, PointCloudWriter};
 
 /// Extension detection — called by the conversion pipeline dispatcher.
 pub fn detect(ext: &str) -> bool {
@@ -193,6 +193,114 @@ impl<T: Read + Seek> PointCloudReader for E57ReaderImpl<T> {
 
     fn metadata(&self) -> &PipelineContext {
         &self.metadata
+    }
+}
+
+/// Writes point clouds to E57 format by buffering points and writing them
+/// on finalize via the e57 crate's E57Writer and PointCloudWriter types.
+pub struct E57WriterImpl {
+    path: std::path::PathBuf,
+    #[allow(dead_code)]
+    layout: PointLayout,
+    metadata: PipelineContext,
+    point_count: u64,
+    /// Buffered points: (x, y, z, intensity_u16)
+    points: Vec<(f64, f64, f64, u16)>,
+}
+
+impl E57WriterImpl {
+    /// Create a new E57 writer that buffers points until finalize.
+    pub fn new(path: &Path, layout: &PointLayout, metadata: &PipelineContext) -> Result<Self> {
+        Ok(Self {
+            path: path.to_path_buf(),
+            layout: layout.clone(),
+            metadata: metadata.clone(),
+            point_count: 0,
+            points: Vec::with_capacity(layout.num_points as usize),
+        })
+    }
+}
+
+impl PointCloudWriter for E57WriterImpl {
+    fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
+        let point_size: usize = 26; // 3×f64 (24 bytes) + u16 (2 bytes)
+        for i in 0..chunk.len {
+            let offset = i * point_size;
+            let x = f64::from_le_bytes(chunk.data[offset..offset + 8].try_into().unwrap());
+            let y = f64::from_le_bytes(chunk.data[offset + 8..offset + 16].try_into().unwrap());
+            let z = f64::from_le_bytes(chunk.data[offset + 16..offset + 24].try_into().unwrap());
+            let intensity = u16::from_le_bytes(
+                chunk.data[offset + 24..offset + 26].try_into().unwrap(),
+            );
+            self.points.push((x, y, z, intensity));
+        }
+        self.point_count += chunk.len as u64;
+        Ok(())
+    }
+
+    fn finalize(&mut self) -> Result<()> {
+        use e57::{E57Writer, Record, RecordDataType, RecordName, RecordValue};
+
+        if self.points.is_empty() {
+            return Ok(());
+        }
+
+        // Create E57 writer — from_file handles file creation with read+write+seek
+        let mut writer = E57Writer::from_file(&self.path, "rubipont")
+            .map_err(|e| RubipontError::ParseError {
+                format: "E57".into(),
+                offset: 0,
+                detail: format!("Cannot create E57 writer: {}", e),
+            })?;
+
+        // Set CRS if available
+        if let Some(crs) = &self.metadata.crs_wkt {
+            writer.set_coordinate_metadata(Some(crs.clone()));
+        }
+
+        // Define prototype: Cartesian X/Y/Z as f64, Intensity as unit f32
+        let prototype = vec![
+            Record { name: RecordName::CartesianX, data_type: RecordDataType::F64 },
+            Record { name: RecordName::CartesianY, data_type: RecordDataType::F64 },
+            Record { name: RecordName::CartesianZ, data_type: RecordDataType::F64 },
+            Record { name: RecordName::Intensity, data_type: RecordDataType::UNIT_F32 },
+        ];
+
+        let mut pc_writer = writer.add_pointcloud("pc0", prototype)
+            .map_err(|e| RubipontError::ParseError {
+                format: "E57".into(),
+                offset: 0,
+                detail: format!("Cannot create point cloud writer: {}", e),
+            })?;
+
+        // Write all buffered points — convert u16 intensity to normalized f32 (0..1)
+        for (x, y, z, intensity) in &self.points {
+            let values = vec![
+                RecordValue::Double(*x),
+                RecordValue::Double(*y),
+                RecordValue::Double(*z),
+                RecordValue::Single(*intensity as f32 / 65535.0),
+            ];
+            pc_writer.add_point(values).map_err(|e| RubipontError::ParseError {
+                format: "E57".into(),
+                offset: self.point_count,
+                detail: format!("Cannot write point: {}", e),
+            })?;
+        }
+
+        pc_writer.finalize().map_err(|e| RubipontError::ParseError {
+            format: "E57".into(),
+            offset: self.point_count,
+            detail: format!("Cannot finalize point cloud: {}", e),
+        })?;
+
+        writer.finalize().map_err(|e| RubipontError::ParseError {
+            format: "E57".into(),
+            offset: self.point_count,
+            detail: format!("Cannot finalize E57 file: {}", e),
+        })?;
+
+        Ok(())
     }
 }
 

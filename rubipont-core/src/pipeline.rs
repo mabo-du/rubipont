@@ -53,6 +53,7 @@ pub fn convert(input: &Path, output: &Path) -> std::result::Result<(), RubipontE
         e if format::las::detect(e) => Box::new(format::las::LasWriter::new(output, &layout, &meta)?),
         e if format::laz::detect(e) => Box::new(format::laz::LazWriter::new(output, &layout, &meta)?),
         e if format::pcd::detect(e) => Box::new(format::pcd::PcdWriter::new(output, &layout, &meta)?),
+        e if format::e57::detect(e) => Box::new(format::e57::E57WriterImpl::new(output, &layout, &meta)?),
         _ => return Err(RubipontError::UnsupportedFormat(out_ext.into())),
     };
 
