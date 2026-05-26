@@ -1,3 +1,5 @@
+#![cfg(feature = "mcap-io")]
+
 use rubipont_core::format;
 
 #[test]

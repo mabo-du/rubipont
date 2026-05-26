@@ -35,6 +35,7 @@ fn info(path: String) -> PyResult<String> {
             format::e57::E57ReaderImpl::new(input)
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
         ),
+        #[cfg(feature = "mcap-io")]
         e if format::mcap::detect(e) => Box::new(
             format::mcap::McapReader::new(input)
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
@@ -76,6 +77,7 @@ fn formats() -> Vec<String> {
         ".laz  — Compressed LAS (read/write)".into(),
         ".pcd  — Point Cloud Data (read/write)".into(),
         ".e57  — ASTM E57 (read/write)".into(),
+        #[cfg(feature = "mcap-io")]
         ".mcap — ROS 2 MCAP (read)".into(),
     ]
 }

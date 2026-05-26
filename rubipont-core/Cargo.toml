@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Zero-copy LiDAR point cloud format translation — core library"
 
+[features]
+default = ["mcap-io"]
+mcap-io = ["dep:mcap", "dep:rosbag"]
+wasm = []
+
 [dependencies]
 las = "0.9"
 laz = "0.12"
@@ -11,9 +16,9 @@ bytemuck = "1"
 byteorder = "1"
 thiserror = "2"
 e57 = "0.11.12"
-mcap = { version = "0.24.0", features = ["lz4"] }
+mcap = { version = "0.24", features = ["lz4", "zstd"], optional = true }
 memmap2 = "0.9"
-rosbag = "0.6.3"
+rosbag = { version = "0.6.3", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

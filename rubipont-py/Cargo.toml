@@ -8,6 +8,10 @@ description = "Python bindings for rubipont LiDAR format translation"
 name = "rubipont"
 crate-type = ["cdylib"]
 
+[features]
+default = ["mcap-io"]
+mcap-io = ["rubipont-core/mcap-io"]
+
 [dependencies]
 rubipont-core = { path = "../rubipont-core" }
 pyo3 = { version = "0.28", features = ["extension-module"] }
