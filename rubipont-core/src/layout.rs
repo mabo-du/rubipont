@@ -26,4 +26,6 @@ pub struct PipelineContext {
     pub coordinate_scale: Option<(f64, f64, f64)>,
     /// Offset for coordinate conversion
     pub coordinate_offset: Option<(f64, f64, f64)>,
+    /// CRS (Coordinate Reference System) WKT string (from E57 files)
+    pub crs_wkt: Option<String>,
 }
