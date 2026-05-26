@@ -1,0 +1,13 @@
+[package]
+name = "rubipont-py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for rubipont LiDAR format translation"
+
+[lib]
+name = "rubipont"
+crate-type = ["cdylib"]
+
+[dependencies]
+rubipont-core = { path = "../rubipont-core" }
+pyo3 = { version = "0.28", features = ["extension-module"] }
