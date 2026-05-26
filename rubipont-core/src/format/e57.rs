@@ -58,11 +58,8 @@ impl<T: Read + Seek> E57ReaderImpl<T> {
         // Extract CRS metadata if available
         let crs_wkt = reader.coordinate_metadata().map(|s| s.to_string());
 
-        let metadata = PipelineContext {
-            coordinate_scale: None,
-            coordinate_offset: None,
-            crs_wkt,
-        };
+        let mut metadata = PipelineContext::default();
+        metadata.crs_wkt = crs_wkt;
 
         let layout = PointLayout {
             point_size: 26, // 3×f64 (24 bytes) + u16 (2 bytes) = 26 bytes internal format
