@@ -16,6 +16,9 @@ enum Commands {
         input: PathBuf,
         /// Output file path (format auto-detected from extension)
         output: PathBuf,
+        /// Target CRS EPSG code (e.g., 3857 for Web Mercator)
+        #[arg(long)]
+        target_crs: Option<u32>,
     },
     /// Show information about a point cloud file
     Info {
@@ -30,8 +33,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Convert { input, output } => {
-            match rubipont_core::pipeline::convert(&input, &output) {
+        Commands::Convert { input, output, target_crs } => {
+            match rubipont_core::pipeline::convert(&input, &output, target_crs) {
                 Ok(()) => {
                     eprintln!("Converted {} → {}", input.display(), output.display());
                 }

@@ -30,7 +30,7 @@ fn bench_las_to_pcd(c: &mut Criterion) {
 
     c.bench_function("las_to_pcd_10k", |b| {
         b.iter(|| {
-            rubipont_core::pipeline::convert(black_box(&src), black_box(&dst)).unwrap();
+            rubipont_core::pipeline::convert(black_box(&src), black_box(&dst), None).unwrap();
             let _ = std::fs::remove_file(&dst);
         });
     });
@@ -47,7 +47,7 @@ fn bench_las_to_laz(c: &mut Criterion) {
 
     c.bench_function("las_to_laz_10k", |b| {
         b.iter(|| {
-            rubipont_core::pipeline::convert(black_box(&src), black_box(&dst)).unwrap();
+            rubipont_core::pipeline::convert(black_box(&src), black_box(&dst), None).unwrap();
             let _ = std::fs::remove_file(&dst);
         });
     });
@@ -62,12 +62,12 @@ fn bench_laz_to_las(c: &mut Criterion) {
     let dst = tmp.join("bench_laz_to_las.las");
 
     generate_las(&src_las, 10_000);
-    rubipont_core::pipeline::convert(&src_las, &src).unwrap();
+    rubipont_core::pipeline::convert(&src_las, &src, None).unwrap();
     std::fs::remove_file(&src_las).ok();
 
     c.bench_function("laz_to_las_10k", |b| {
         b.iter(|| {
-            rubipont_core::pipeline::convert(black_box(&src), black_box(&dst)).unwrap();
+            rubipont_core::pipeline::convert(black_box(&src), black_box(&dst), None).unwrap();
             let _ = std::fs::remove_file(&dst);
         });
     });

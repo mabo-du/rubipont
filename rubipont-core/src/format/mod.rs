@@ -1,4 +1,8 @@
+#[cfg(feature = "mcap-io")]
+pub mod bag;
 pub mod e57;
 pub mod las;
 pub mod laz;
+#[cfg(feature = "mcap-io")]
+pub mod mcap;
 pub mod pcd;
