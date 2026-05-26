@@ -47,6 +47,19 @@ impl LasReader {
             transforms.z.offset,
         ));
 
+        // Store LAS version
+        metadata.las_version = Some((
+            header.version().major,
+            header.version().minor,
+        ));
+
+        // Extract WKT CRS (LAS 1.4 EVLRs)
+        if let Some(wkt_bytes) = header.get_wkt_crs_bytes() {
+            if let Ok(crs_str) = String::from_utf8(wkt_bytes.to_vec()) {
+                metadata.crs_wkt = Some(crs_str);
+            }
+        }
+
         Ok(Self {
             las_reader,
             layout,
@@ -103,7 +116,8 @@ pub struct LasWriter {
 
 impl LasWriter {
     pub fn new(path: &Path, _layout: &PointLayout, metadata: &PipelineContext) -> Result<Self> {
-        let mut builder = las::Builder::from((1, 2));
+        let version = metadata.las_version.unwrap_or((1, 2));
+        let mut builder = las::Builder::from(version);
         builder.point_format =
             las::point::Format::new(0).map_err(|e| RubipontError::ParseError {
                 format: "LAS".into(),
@@ -122,11 +136,20 @@ impl LasWriter {
             builder.transforms.z.offset = oz;
         }
 
-        let header = builder.into_header().map_err(|e| RubipontError::ParseError {
-            format: "LAS".into(),
-            offset: 0,
-            detail: e.to_string(),
-        })?;
+        let mut header = builder
+            .into_header()
+            .map_err(|e| RubipontError::ParseError {
+                format: "LAS".into(),
+                offset: 0,
+                detail: e.to_string(),
+            })?;
+
+        // Write WKT CRS into EVLRs for LAS 1.4+
+        if version >= (1, 4) {
+            if let Some(crs_wkt) = &metadata.crs_wkt {
+                header.set_wkt_crs(crs_wkt.as_bytes().to_vec()).ok();
+            }
+        }
 
         let writer =
             las::Writer::from_path(path, header).map_err(|e| RubipontError::ParseError {

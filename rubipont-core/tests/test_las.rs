@@ -47,3 +47,79 @@ fn las_reads_points() {
 
     std::fs::remove_file(&tmp).ok();
 }
+
+#[test]
+fn las14_version_preserved() {
+    let tmp = std::env::temp_dir().join("test_las14.las");
+
+    // Write a LAS 1.4 file via the las crate directly
+    {
+        let mut builder = las::Builder::from((1, 4));
+        builder.point_format = las::point::Format::new(0).unwrap();
+        let header = builder.into_header().unwrap();
+        let mut writer = las::Writer::from_path(&tmp, header).unwrap();
+        writer
+            .write_point(las::Point {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+                intensity: 100,
+                ..Default::default()
+            })
+            .unwrap();
+        writer.close().unwrap();
+    }
+
+    // Read back via our reader to verify version preservation
+    let reader = LasReader::new(&tmp).unwrap();
+    let meta = reader.metadata();
+    assert_eq!(meta.las_version, Some((1, 4)));
+
+    std::fs::remove_file(&tmp).ok();
+}
+
+#[test]
+fn las14_wkt_crs_roundtrip() {
+    let tmp = std::env::temp_dir().join("test_crs.las");
+    let wkt = "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\"]]";
+
+    // Write a LAS 1.4 with WKT CRS via the las crate directly
+    {
+        let mut builder = las::Builder::from((1, 4));
+        builder.point_format = las::point::Format::new(0).unwrap();
+        let mut header = builder.into_header().unwrap();
+        header.set_wkt_crs(wkt.as_bytes().to_vec()).unwrap();
+
+        let mut writer = las::Writer::from_path(&tmp, header).unwrap();
+        writer
+            .write_point(las::Point {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+                intensity: 100,
+                ..Default::default()
+            })
+            .unwrap();
+        writer.close().unwrap();
+    }
+
+    // Read via our reader, verify CRS and version are extracted
+    let our_reader = LasReader::new(&tmp).unwrap();
+    let meta = our_reader.metadata();
+
+    assert!(
+        meta.crs_wkt.is_some(),
+        "CRS should be extracted from LAS 1.4"
+    );
+    if let Some(crs) = &meta.crs_wkt {
+        assert!(
+            crs.contains("WGS 84"),
+            "CRS should contain 'WGS 84': {}",
+            crs
+        );
+    }
+
+    assert_eq!(meta.las_version, Some((1, 4)));
+
+    std::fs::remove_file(&tmp).ok();
+}
