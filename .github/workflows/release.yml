@@ -20,7 +20,7 @@ jobs:
         run: cargo build --release --workspace
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: rubipont ${{ github.ref_name }}
           generate_release_notes: true
