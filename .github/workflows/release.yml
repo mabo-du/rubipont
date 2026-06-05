@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: rubipont ${{ github.ref_name }}
+          generate_release_notes: true
