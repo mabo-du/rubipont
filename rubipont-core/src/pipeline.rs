@@ -77,10 +77,31 @@ pub fn convert(
             // Reproject points in this chunk
             let src_epsg = transform::source_epsg_from_crs_wkt(meta.crs_wkt.as_deref());
             let ps = layout.point_size;
+
+            // Guard against malformed chunks: data must be large enough for all points
+            let expected_len = chunk.len.checked_mul(ps)
+                .ok_or_else(|| RubipontError::ParseError {
+                    format: "pipeline".into(),
+                    offset: 0,
+                    detail: "chunk point count overflow".into(),
+                })?;
+            if chunk.data.len() < expected_len {
+                return Err(RubipontError::ParseError {
+                    format: "pipeline".into(),
+                    offset: 0,
+                    detail: format!(
+                        "truncated chunk: expected {} bytes for {} points, got {}",
+                        expected_len,
+                        chunk.len,
+                        chunk.data.len()
+                    ),
+                });
+            }
+
             let mut data = chunk.data;
 
             for i in 0..chunk.len {
-                let offset = i * 26;
+                let offset = i * ps;
                 let x = f64::from_le_bytes(read_array(&data, offset)?);
                 let y = f64::from_le_bytes(read_array(&data, offset + 8)?);
                 let z = f64::from_le_bytes(read_array(&data, offset + 16)?);

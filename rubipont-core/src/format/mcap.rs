@@ -189,10 +189,10 @@ fn extract_points_from_pointcloud2(data: &[u8]) -> Result<Vec<(f64, f64, f64, u1
     let data_len = read_u32_le(data, &mut offset)? as usize;
     let data_start = offset;
 
-    // is_dense: u8 (may be missing in some files)
+    // is_dense: u8 (may be missing in some files — default to true/dense)
+    // TODO: when is_dense == 0, skip points with NaN coordinates per PointCloud2 spec
     let _is_dense = if offset + data_len < data.len() {
-        // Read data first, then we'll check is_dense at the end
-        1u8
+        *data.get(offset + data_len).unwrap_or(&1u8)
     } else {
         1u8
     };

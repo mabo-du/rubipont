@@ -8,6 +8,9 @@ description = "CLI for rubipont LiDAR format translation"
 name = "rp"
 path = "src/main.rs"
 
+[features]
+mcap-io = ["rubipont-core/mcap-io"]
+
 [dependencies]
 rubipont-core = { path = "../rubipont-core" }
 clap = { version = "4", features = ["derive"] }

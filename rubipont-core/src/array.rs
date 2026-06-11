@@ -24,6 +24,12 @@ pub fn read_array<const N: usize>(data: &[u8], offset: usize) -> Result<[u8; N]>
 /// (should be guarded by prior bounds check).
 #[inline]
 pub fn read_u32_unchecked(data: &[u8], offset: usize) -> u32 {
+    debug_assert!(
+        offset + 4 <= data.len(),
+        "read_u32_unchecked: offset {} + 4 exceeds data length {}",
+        offset,
+        data.len()
+    );
     let mut buf = [0u8; 4];
     buf.copy_from_slice(&data[offset..offset + 4]);
     u32::from_le_bytes(buf)
