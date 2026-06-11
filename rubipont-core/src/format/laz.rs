@@ -55,9 +55,11 @@ impl LazReader {
             has_integer_coords: true,
         };
 
-        let mut metadata = PipelineContext::default();
-        metadata.coordinate_scale = Some(scale);
-        metadata.coordinate_offset = Some(offset);
+        let metadata = PipelineContext {
+            coordinate_scale: Some(scale),
+            coordinate_offset: Some(offset),
+            ..Default::default()
+        };
 
         Ok(Self {
             reader,
@@ -196,18 +198,12 @@ impl LazWriter {
         });
 
         let header = builder.into_header().map_err(|e| {
-            RubipontError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
+            RubipontError::Io(std::io::Error::other(e.to_string()))
         })?;
 
         // Write the LAS header (including VLRs) to the file
         header.write_to(&mut file).map_err(|e| {
-            RubipontError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
+            RubipontError::Io(std::io::Error::other(e.to_string()))
         })?;
 
         // Patch the point data record format byte to set the
