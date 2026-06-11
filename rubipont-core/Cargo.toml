@@ -1,6 +1,6 @@
 [package]
 name = "rubipont-core"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 description = "Zero-copy LiDAR point cloud format translation — core library"
 

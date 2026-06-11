@@ -55,9 +55,14 @@ fn main() {
         }
         Commands::Formats => {
             println!("Supported formats:");
-            println!("  .las  — ASPRS LAS 1.2 (read/write)");
-            println!("  .laz  — Compressed LAS (read/write)");
-            println!("  .pcd  — Point Cloud Data (read/write)");
+            println!("  .las  — ASPRS LAS 1.2/1.4 (read/write)");
+            println!("  .laz  — Compressed LAS       (read/write)");
+            println!("  .pcd  — Point Cloud Data     (read/write)");
+            println!("  .e57  — ASTM E57             (read/write)");
+            #[cfg(feature = "mcap-io")]
+            println!("  .mcap — ROS 2 MCAP           (read/write)");
+            #[cfg(feature = "mcap-io")]
+            println!("  .bag  — ROS 1 bag            (read)");
         }
     }
 }
@@ -71,6 +76,11 @@ fn show_info(input: &std::path::Path) -> Result<(), rubipont_core::error::Rubipo
         e if format::las::detect(e) => Box::new(format::las::LasReader::new(input)?),
         e if format::laz::detect(e) => Box::new(format::laz::LazReader::new(input)?),
         e if format::pcd::detect(e) => Box::new(format::pcd::PcdReader::new(input)?),
+        e if format::e57::detect(e) => Box::new(format::e57::E57ReaderImpl::new(input)?),
+        #[cfg(feature = "mcap-io")]
+        e if format::mcap::detect(e) => Box::new(format::mcap::McapReader::new(input)?),
+        #[cfg(feature = "mcap-io")]
+        e if format::bag::detect(e) => Box::new(format::bag::BagReader::new(input)?),
         _ => return Err(rubipont_core::error::RubipontError::UnsupportedFormat(ext.into())),
     };
 
