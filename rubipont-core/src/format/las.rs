@@ -36,30 +36,26 @@ impl LasReader {
         };
 
         let transforms = header.transforms();
-        let mut metadata = PipelineContext::default();
-        metadata.coordinate_scale = Some((
-            transforms.x.scale,
-            transforms.y.scale,
-            transforms.z.scale,
-        ));
-        metadata.coordinate_offset = Some((
-            transforms.x.offset,
-            transforms.y.offset,
-            transforms.z.offset,
-        ));
 
-        // Store LAS version
-        metadata.las_version = Some((
-            header.version().major,
-            header.version().minor,
-        ));
+        // Extract WKT CRS (LAS 1.4 EVLRs) before building metadata
+        let crs_wkt = header
+            .get_wkt_crs_bytes()
+            .and_then(|wkt_bytes| String::from_utf8(wkt_bytes.to_vec()).ok());
 
-        // Extract WKT CRS (LAS 1.4 EVLRs)
-        if let Some(wkt_bytes) = header.get_wkt_crs_bytes() {
-            if let Ok(crs_str) = String::from_utf8(wkt_bytes.to_vec()) {
-                metadata.crs_wkt = Some(crs_str);
-            }
-        }
+        let metadata = PipelineContext {
+            coordinate_scale: Some((
+                transforms.x.scale,
+                transforms.y.scale,
+                transforms.z.scale,
+            )),
+            coordinate_offset: Some((
+                transforms.x.offset,
+                transforms.y.offset,
+                transforms.z.offset,
+            )),
+            las_version: Some((header.version().major, header.version().minor)),
+            crs_wkt,
+        };
 
         Ok(Self {
             las_reader,
