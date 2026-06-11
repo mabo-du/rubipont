@@ -18,6 +18,8 @@ pub fn source_epsg_from_crs_wkt(crs_wkt: Option<&str>) -> Option<u32> {
             // Match the pattern: AUTHORITY["EPSG","<code>"]
             if let Some(start) = rest.find("\"EPSG\",\"") {
                 let num_start = start + 9; // skip past "\"EPSG\",\""
+                // SAFETY: find("\"EPSG\",\"") above confirmed the substring
+                // exists at `start`, so num_start is within bounds of `rest`
                 #[allow(unused_unsafe)]
                 let remainder = unsafe { rest.get_unchecked(num_start..) };
                 if let Some(end) = remainder.find('\"') {

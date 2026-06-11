@@ -59,7 +59,16 @@ fn read_field_as_f64(buf: &[u8], size: usize, typ: FieldType) -> Result<f64> {
         (FieldType::I, 2) => Ok(i16::from_le_bytes(read_n(buf)?) as f64),
         (FieldType::I, 4) => Ok(i32::from_le_bytes(read_n(buf)?) as f64),
         (FieldType::I, 8) => Ok(i64::from_le_bytes(read_n(buf)?) as f64),
-        _ => Ok(0.0),
+        _ => {
+            return Err(RubipontError::ParseError {
+                format: "PCD".into(),
+                offset: 0,
+                detail: format!(
+                    "unsupported field type for f64 conversion: {:?} size={}",
+                    typ, size
+                ),
+            });
+        }
     }
 }
 
@@ -71,7 +80,16 @@ fn read_field_as_u16(buf: &[u8], size: usize, typ: FieldType) -> Result<u16> {
         (FieldType::U, 4) => Ok((u32::from_le_bytes(read_n(buf)?) & 0xFFFF) as u16),
         (FieldType::F, 4) => Ok(f32::from_le_bytes(read_n(buf)?) as u16),
         (FieldType::F, 8) => Ok(f64::from_le_bytes(read_n(buf)?) as u16),
-        _ => Ok(0),
+        _ => {
+            return Err(RubipontError::ParseError {
+                format: "PCD".into(),
+                offset: 0,
+                detail: format!(
+                    "unsupported field type for u16 conversion: {:?} size={}",
+                    typ, size
+                ),
+            });
+        }
     }
 }
 

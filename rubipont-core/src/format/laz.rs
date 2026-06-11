@@ -149,6 +149,16 @@ impl LazWriter {
         let scale = metadata.coordinate_scale.unwrap_or((0.01, 0.01, 0.01));
         let offset = metadata.coordinate_offset.unwrap_or((0.0, 0.0, 0.0));
 
+        // Reject zero scale components — would cause division by zero
+        // when converting f64 coordinates back to scaled integers.
+        if scale.0 == 0.0 || scale.1 == 0.0 || scale.2 == 0.0 {
+            return Err(RubipontError::ParseError {
+                format: "LAZ".into(),
+                offset: 0,
+                detail: "coordinate scale components must be non-zero".into(),
+            });
+        }
+
         // Build LAZ items for Point Format 0
         let laz_vlr = {
             let items = laz::LazItemRecordBuilder::new()
@@ -241,7 +251,15 @@ impl PointCloudWriter for LazWriter {
         for i in 0..chunk.len {
             let offset = i * 26;
             if offset + 26 > chunk.data.len() {
-                break;
+                return Err(RubipontError::ParseError {
+                    format: "LAZ".into(),
+                    offset: self.point_count,
+                    detail: format!(
+                        "truncated chunk: expected {} bytes, got {} (point stride 26)",
+                        offset + 26,
+                        chunk.data.len()
+                    ),
+                });
             }
 
             // Read our internal f64 format
