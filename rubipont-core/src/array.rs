@@ -1,6 +1,5 @@
 /// Utility functions for safe byte array extraction.
 /// Replaces `data[a..b].try_into().unwrap()` with checked alternatives.
-
 use crate::error::{Result, RubipontError};
 
 /// Read a fixed-size array from a byte slice at the given offset.

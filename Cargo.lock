@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "rubipont-cli"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "clap",
  "las",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "rubipont-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytemuck",
  "byteorder",
@@ -1086,7 +1086,7 @@ dependencies = [
 
 [[package]]
 name = "rubipont-py"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "pyo3",
  "rubipont-core",
