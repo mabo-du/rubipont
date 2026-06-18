@@ -28,11 +28,15 @@ pub struct McapReader {
 
 impl McapReader {
     pub fn new(path: &Path) -> Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        // Read the full file into memory.  This avoids the SIGBUS risk of
+        // memory-mapped I/O (the file could be truncated or modified while
+        // being read).  Since all point data is already collected into a
+        // Vec<u8> below, the extra allocation for the file bytes is freed
+        // after the message stream is consumed.
+        let raw_bytes = std::fs::read(path)?;
 
         // Read the summary section to discover channels
-        let summary = mcap::read::Summary::read(&mmap[..])
+        let summary = mcap::read::Summary::read(&raw_bytes[..])
             .map_err(|e| RubipontError::ParseError {
                 format: "MCAP".into(),
                 offset: 0,
@@ -54,7 +58,7 @@ impl McapReader {
         let mut data: Vec<u8> = Vec::new();
         let mut total_points: usize = 0;
 
-        let stream = mcap::read::MessageStream::new(&mmap[..])
+        let stream = mcap::read::MessageStream::new(&raw_bytes[..])
             .map_err(|e| RubipontError::ParseError {
                 format: "MCAP".into(),
                 offset: 0,
