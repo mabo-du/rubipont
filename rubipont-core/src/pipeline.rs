@@ -34,6 +34,53 @@ pub fn extension(path: &Path) -> &str {
         .unwrap_or("")
 }
 
+/// Create a reader for the file at `path` based on its extension.
+///
+/// Used by `convert()`, `format_info()`, and the Python `info()` entry point.
+/// Consolidating dispatch here eliminates the 3‑way match‑on‑extension
+/// duplication between the CLI, Python bindings, and pipeline.
+fn create_reader(path: &Path) -> std::result::Result<Box<dyn PointCloudReader>, RubipontError> {
+    let ext = extension(path);
+    let r: Box<dyn PointCloudReader> = match ext {
+        e if format::las::detect(e) => Box::new(format::las::LasReader::new(path)?),
+        e if format::laz::detect(e) => Box::new(format::laz::LazReader::new(path)?),
+        e if format::pcd::detect(e) => Box::new(format::pcd::PcdReader::new(path)?),
+        e if format::e57::detect(e) => Box::new(format::e57::E57ReaderImpl::new(path)?),
+        #[cfg(feature = "mcap-io")]
+        e if format::mcap::detect(e) => Box::new(format::mcap::McapReader::new(path)?),
+        #[cfg(feature = "mcap-io")]
+        e if format::bag::detect(e) => Box::new(format::bag::BagReader::new(path)?),
+        _ => return Err(RubipontError::UnsupportedFormat(ext.into())),
+    };
+    Ok(r)
+}
+
+/// Read point cloud metadata from `path` and return a human-readable string.
+///
+/// Replaces `show_info` / `info` that were duplicated between the CLI and
+/// Python bindings.  Callers (CLI prints the string; Python returns it) no
+/// longer need to dispatch format readers or format display output themselves.
+pub fn format_info(path: &Path) -> std::result::Result<String, RubipontError> {
+    let reader = create_reader(path)?;
+    let layout = reader.layout();
+    let meta = reader.metadata();
+    let mut info = String::new();
+    info.push_str(&format!("File: {}\n", path.display()));
+    info.push_str(&format!("Points: {}\n", layout.num_points));
+    info.push_str(&format!("Point size: {} bytes\n", layout.point_size));
+    info.push_str(&format!("Integer coords: {}\n", layout.has_integer_coords));
+    if let Some((sx, sy, sz)) = &meta.coordinate_scale {
+        info.push_str(&format!("Scale: ({}, {}, {})\n", sx, sy, sz));
+    }
+    if let Some((ox, oy, oz)) = &meta.coordinate_offset {
+        info.push_str(&format!("Offset: ({}, {}, {})\n", ox, oy, oz));
+    }
+    if let Some(crs) = &meta.crs_wkt {
+        info.push_str(&format!("CRS: {}\n", crs));
+    }
+    Ok(info)
+}
+
 /// Convert a point cloud file between formats.
 ///
 /// Dispatches reader/writer by file extension.  When `target_epsg` is
@@ -44,20 +91,9 @@ pub fn convert(
     output: &Path,
     target_epsg: Option<u32>,
 ) -> std::result::Result<(), RubipontError> {
-    let ext = extension(input);
     let out_ext = extension(output);
 
-    let mut reader: Box<dyn PointCloudReader> = match ext {
-        e if format::las::detect(e) => Box::new(format::las::LasReader::new(input)?),
-        e if format::laz::detect(e) => Box::new(format::laz::LazReader::new(input)?),
-        e if format::pcd::detect(e) => Box::new(format::pcd::PcdReader::new(input)?),
-        e if format::e57::detect(e) => Box::new(format::e57::E57ReaderImpl::new(input)?),
-        #[cfg(feature = "mcap-io")]
-        e if format::mcap::detect(e) => Box::new(format::mcap::McapReader::new(input)?),
-        #[cfg(feature = "mcap-io")]
-        e if format::bag::detect(e) => Box::new(format::bag::BagReader::new(input)?),
-        _ => return Err(RubipontError::UnsupportedFormat(ext.into())),
-    };
+    let mut reader = create_reader(input)?;
 
     let layout = reader.layout().clone();
     let meta = reader.metadata().clone();

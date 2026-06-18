@@ -68,36 +68,6 @@ fn main() {
 }
 
 fn show_info(input: &std::path::Path) -> Result<(), rubipont_core::error::RubipontError> {
-    use rubipont_core::format;
-    use rubipont_core::pipeline::{PointCloudReader, extension};
-
-    let ext = extension(input);
-    let reader: Box<dyn PointCloudReader> = match ext {
-        e if format::las::detect(e) => Box::new(format::las::LasReader::new(input)?),
-        e if format::laz::detect(e) => Box::new(format::laz::LazReader::new(input)?),
-        e if format::pcd::detect(e) => Box::new(format::pcd::PcdReader::new(input)?),
-        e if format::e57::detect(e) => Box::new(format::e57::E57ReaderImpl::new(input)?),
-        #[cfg(feature = "mcap-io")]
-        e if format::mcap::detect(e) => Box::new(format::mcap::McapReader::new(input)?),
-        #[cfg(feature = "mcap-io")]
-        e if format::bag::detect(e) => Box::new(format::bag::BagReader::new(input)?),
-        _ => return Err(rubipont_core::error::RubipontError::UnsupportedFormat(ext.into())),
-    };
-
-    let layout = reader.layout();
-    let metadata = reader.metadata();
-
-    println!("File: {}", input.display());
-    println!("Points: {}", layout.num_points);
-    println!("Point size: {} bytes", layout.point_size);
-    println!("Integer coords: {}", layout.has_integer_coords);
-
-    if let Some((sx, sy, sz)) = &metadata.coordinate_scale {
-        println!("Scale: ({}, {}, {})", sx, sy, sz);
-    }
-    if let Some((ox, oy, oz)) = &metadata.coordinate_offset {
-        println!("Offset: ({}, {}, {})", ox, oy, oz);
-    }
-
+    println!("{}", rubipont_core::pipeline::format_info(input)?);
     Ok(())
 }
