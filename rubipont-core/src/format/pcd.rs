@@ -350,6 +350,11 @@ pub struct PcdWriter {
 
 impl PcdWriter {
     pub fn new(path: &Path, layout: &PointLayout, _metadata: &PipelineContext) -> Result<Self> {
+        // TODO(v0.3.0): streaming write — buffering all points in memory
+        // before writing the header means a 100M-point file consumes ~2.6GB
+        // of RAM before any data lands on disk.  This matches the E57Writer
+        // and McapWriter patterns but should be replaced with a seek-back-
+        // and-patch approach or a double-pass during the PointBatch migration.
         Ok(Self {
             path: path.to_path_buf(),
             data: Vec::with_capacity(layout.num_points as usize * INTERNAL_POINT_SIZE),
