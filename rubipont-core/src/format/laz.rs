@@ -91,7 +91,7 @@ impl PointCloudReader for LazReader {
             return Ok(None);
         }
 
-        let mut data = Vec::with_capacity(4096 * 26);
+        let mut data = Vec::with_capacity(4096 * INTERNAL_POINT_SIZE);
         let mut count = 0usize;
 
         for _ in 0..4096 {
@@ -263,14 +263,14 @@ impl LazWriter {
 impl PointCloudWriter for LazWriter {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
         for i in 0..chunk.len {
-            let offset = i * 26;
-            if offset + 26 > chunk.data.len() {
+            let offset = i * INTERNAL_POINT_SIZE;
+            if offset + INTERNAL_POINT_SIZE > chunk.data.len() {
                 return Err(RubipontError::ParseError {
                     format: "LAZ".into(),
                     offset: self.point_count,
                     detail: format!(
-                        "truncated chunk: expected {} bytes, got {} (point stride 26)",
-                        offset + 26,
+                        "truncated chunk: expected {} bytes, got {} (point stride {INTERNAL_POINT_SIZE})",
+                        offset + INTERNAL_POINT_SIZE,
                         chunk.data.len()
                     ),
                 });
