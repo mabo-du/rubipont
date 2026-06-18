@@ -80,7 +80,7 @@ impl PointCloudReader for LasReader {
             return Ok(None);
         }
 
-        let mut data = Vec::with_capacity(4096 * 26);
+        let mut data = Vec::with_capacity(4096 * INTERNAL_POINT_SIZE);
         let mut count = 0usize;
 
         for pt_result in self.las_reader.points().take(4096) {
@@ -172,7 +172,7 @@ impl LasWriter {
 
 impl PointCloudWriter for LasWriter {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
-        let point_size = 26usize; // 3xf64 (8 each) + u16 (2) = 26 bytes
+        let point_size = INTERNAL_POINT_SIZE; // 3×f64 (24 bytes) + u16 (2 bytes)
         for i in 0..chunk.len {
             let offset = i * point_size;
             let x = f64::from_le_bytes(read_array(&chunk.data, offset)?);

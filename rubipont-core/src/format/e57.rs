@@ -162,7 +162,12 @@ impl<T: Read + Seek> PointCloudReader for E57ReaderImpl<T> {
                 CartesianCoordinate::Invalid => (f64::NAN, f64::NAN, f64::NAN),
             };
 
-            // Intensity: normalized 0..1 from e57 crate, scale to u16
+            // Intensity: normalized 0..1 from e57 crate, scale to u16.
+            // TODO(v0.3.0): fabricated intensity — when the E57 point has
+            // no intensity value, this produces 0u16 which is
+            // indistinguishable from a measured zero.  PointBatch
+            // migration replaces this with an explicit optional field
+            // so absence means "not measured" (ADR 001).
             let intensity = match pt.intensity {
                 Some(v) => (v.clamp(0.0, 1.0) * 65535.0) as u16,
                 None => 0,

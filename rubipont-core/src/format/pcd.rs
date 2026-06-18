@@ -224,6 +224,10 @@ impl PointCloudReader for PcdReader {
                 let x = *vals.first().unwrap_or(&0.0);
                 let y = *vals.get(1).unwrap_or(&0.0);
                 let z = *vals.get(2).unwrap_or(&0.0);
+                // TODO(v0.3.0): fabricated intensity — when no 4th column
+                // exists, this synthesises 0u16 which downstream formats
+                // interpret as real data.  PointBatch migration replaces
+                // this with an explicit optional field (ADR 001).
                 let intensity = vals.get(3).copied().unwrap_or(0.0) as u16;
 
                 data.extend_from_slice(&x.to_le_bytes());
