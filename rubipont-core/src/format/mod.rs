@@ -6,3 +6,5 @@ pub mod laz;
 #[cfg(feature = "mcap-io")]
 pub mod mcap;
 pub mod pcd;
+#[cfg(feature = "mcap-io")]
+pub mod pointcloud2;
