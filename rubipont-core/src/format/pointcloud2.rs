@@ -58,7 +58,7 @@ pub fn extract_points_from_pointcloud2(
         fields.push((name, field_offset, datatype, count));
     }
 
-    let _is_bigendian = read_u8(data, &mut offset, format_name)?;
+    let is_bigendian = read_u8(data, &mut offset, format_name)?;
     let point_step = read_u32_le(data, &mut offset, format_name)?;
     let _row_step = read_u32_le(data, &mut offset, format_name)?;
 
@@ -67,14 +67,24 @@ pub fn extract_points_from_pointcloud2(
     let data_start = offset;
 
     // is_dense: u8 (may be missing — default to true)
-    // TODO: when is_dense == 0, skip points with NaN coordinates per PointCloud2 spec
-    let _is_dense = if offset + data_len < data.len() {
+    let is_dense = if offset + data_len < data.len() {
         *data.get(offset + data_len).unwrap_or(&1u8)
     } else {
         1u8
     };
 
-    // Locate x, y, z, intensity field offsets
+    // Guard: zero point_step would panic in data_len / point_step below
+    if point_step == 0 {
+        return Err(RubipontError::ParseError {
+            format: format_name.into(),
+            offset: offset as u64,
+            detail: "point_step is zero — corrupt PointCloud2 message".into(),
+        });
+    }
+
+    // Locate x, y, z, intensity field offsets in the field descriptor array.
+    // If x, y, or z is absent, the message is malformed — return a ParseError
+    // rather than silently producing (0.0, 0.0, 0.0) points.
     let x_off = fields
         .iter()
         .find(|(n, _, _, _)| n == "x")
@@ -87,6 +97,13 @@ pub fn extract_points_from_pointcloud2(
         .iter()
         .find(|(n, _, _, _)| n == "z")
         .map(|(_, o, _, _)| *o as usize);
+    let (Some(x_off), Some(y_off), Some(z_off)) = (x_off, y_off, z_off) else {
+        return Err(RubipontError::ParseError {
+            format: format_name.into(),
+            offset: offset as u64,
+            detail: "PointCloud2 message missing required x, y, or z field".into(),
+        });
+    };
     let intensity_field = fields.iter().find(|(n, _, _, _)| n == "intensity");
     let intensity_off = intensity_field.map(|(_, o, _, _)| *o as usize);
     let intensity_type = intensity_field.map(|(_, _, t, _)| *t);
@@ -102,35 +119,55 @@ pub fn extract_points_from_pointcloud2(
         }
         let pt = &blob[pt_start..pt_start + point_step as usize];
 
-        // Read XYZ as FLOAT32 (type 7)
-        let x = x_off
-            .and_then(|o| read_f32_at(pt, o))
-            .unwrap_or(0.0) as f64;
-        let y = y_off
-            .and_then(|o| read_f32_at(pt, o))
-            .unwrap_or(0.0) as f64;
-        let z = z_off
-            .and_then(|o| read_f32_at(pt, o))
-            .unwrap_or(0.0) as f64;
+        // Read XYZ as FLOAT32 (type 7).  When is_bigendian is set, swap
+        // the bytes after reading so coordinates are correct regardless
+        // of the source platform's endianness.
+        let mut x = read_f32_at(pt, x_off).unwrap_or(0.0);
+        let mut y = read_f32_at(pt, y_off).unwrap_or(0.0);
+        let mut z = read_f32_at(pt, z_off).unwrap_or(0.0);
+        if is_bigendian != 0 {
+            x = f32::from_bits(x.to_bits().swap_bytes());
+            y = f32::from_bits(y.to_bits().swap_bytes());
+            z = f32::from_bits(z.to_bits().swap_bytes());
+        }
+
+        // When is_dense == 0, skip points whose x, y, or z is NaN
+        // (invalid/unobserved measurement per PointCloud2 spec).
+        if is_dense == 0 && (x.is_nan() || y.is_nan() || z.is_nan()) {
+            continue;
+        }
 
         // Read intensity
         let intensity: u16 = match (intensity_off, intensity_type) {
             (Some(off), Some(7)) => {
-                // FLOAT32 — scale to u16
-                (read_f32_at(pt, off).unwrap_or(0.0) * 65535.0) as u16
+                // FLOAT32 — clamp to [0,1] then scale to u16.
+                // Without the clamp, intensity values >1.0 (common in
+                // some sensors) would overflow the u16 multiplication.
+                let raw = read_f32_at(pt, off).unwrap_or(0.0);
+                let raw = if is_bigendian != 0 {
+                    f32::from_bits(raw.to_bits().swap_bytes())
+                } else {
+                    raw
+                };
+                (raw.clamp(0.0, 1.0) * 65535.0) as u16
             }
             (Some(off), Some(4)) => {
-                // UINT16
-                read_u16_at(pt, off).unwrap_or(0)
+                // UINT16 — conditionally swap for big-endian
+                let raw = read_u16_at(pt, off).unwrap_or(0);
+                if is_bigendian != 0 {
+                    raw.swap_bytes()
+                } else {
+                    raw
+                }
             }
             (Some(off), Some(2)) => {
-                // UINT8 — widen to u16
+                // UINT8 — single byte, no endian swap needed
                 pt.get(off).copied().unwrap_or(0) as u16
             }
             _ => 0,
         };
 
-        result.push((x, y, z, intensity));
+        result.push((x as f64, y as f64, z as f64, intensity));
     }
 
     Ok(result)

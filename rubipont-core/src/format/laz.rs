@@ -11,6 +11,9 @@ pub fn detect(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("laz")
 }
 
+/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
+const INTERNAL_POINT_SIZE: usize = 26;
+
 pub struct LazReader {
     reader: laz::las::file::SimpleReader<'static>,
     layout: PointLayout,
@@ -39,7 +42,6 @@ impl LazReader {
         let scale = (transforms.x.scale, transforms.y.scale, transforms.z.scale);
         let offset = (transforms.x.offset, transforms.y.offset, transforms.z.offset);
         let num_points = las_header.number_of_points();
-        let point_size = las_header.point_format().len() as usize;
 
         let reader = laz::las::file::SimpleReader::new(file).map_err(|e| {
             RubipontError::ParseError {
@@ -50,7 +52,12 @@ impl LazReader {
         })?;
 
         let layout = PointLayout {
-            point_size,
+            // point_size describes the internal chunk format, not the on-disk
+            // LAS format.  The reader always produces 26-byte records regardless
+            // of the source format's point record length.  The pipeline
+            // (pipeline.rs) strides point data using this value, so reporting
+            // the on-disk size would cause misaligned reads when reprojecting.
+            point_size: INTERNAL_POINT_SIZE,
             num_points,
             has_integer_coords: true,
         };
