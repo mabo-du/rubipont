@@ -55,6 +55,29 @@ fn create_reader(path: &Path) -> std::result::Result<Box<dyn PointCloudReader>, 
     Ok(r)
 }
 
+/// Create a writer for the output path based on its extension.
+///
+/// Mirror of `create_reader` for the write side.  Keeps format‑extension
+/// dispatch in one place so adding a new format doesn't require hunting
+/// down multiple match arms.
+fn create_writer(
+    path: &Path,
+    layout: &PointLayout,
+    metadata: &PipelineContext,
+) -> std::result::Result<Box<dyn PointCloudWriter>, RubipontError> {
+    let ext = extension(path);
+    let w: Box<dyn PointCloudWriter> = match ext {
+        e if format::las::detect(e) => Box::new(format::las::LasWriter::new(path, layout, metadata)?),
+        e if format::laz::detect(e) => Box::new(format::laz::LazWriter::new(path, layout, metadata)?),
+        e if format::pcd::detect(e) => Box::new(format::pcd::PcdWriter::new(path, layout, metadata)?),
+        e if format::e57::detect(e) => Box::new(format::e57::E57WriterImpl::new(path, layout, metadata)?),
+        #[cfg(feature = "mcap-io")]
+        e if format::mcap::detect(e) => Box::new(format::mcap::McapWriterImpl::new(path, layout, metadata)?),
+        _ => return Err(RubipontError::UnsupportedFormat(ext.into())),
+    };
+    Ok(w)
+}
+
 /// Read point cloud metadata from `path` and return a human-readable string.
 ///
 /// Replaces `show_info` / `info` that were duplicated between the CLI and
@@ -81,6 +104,26 @@ pub fn format_info(path: &Path) -> std::result::Result<String, RubipontError> {
     Ok(info)
 }
 
+/// List supported formats with descriptions and read/write capability.
+///
+/// Each entry has the form `<extension> — <description> (<capability>)`.
+/// This is the single source of truth for the `rp formats` CLI command
+/// and the Python `rubipont.formats()` function.
+pub fn formats_list() -> Vec<&'static str> {
+    let mut list = vec![
+        ".las  — ASPRS LAS 1.2/1.4 (read/write)",
+        ".laz  — Compressed LAS       (read/write)",
+        ".pcd  — Point Cloud Data     (read/write)",
+        ".e57  — ASTM E57             (read/write)",
+    ];
+    #[cfg(feature = "mcap-io")]
+    {
+        list.push(".mcap — ROS 2 MCAP           (read/write)");
+        list.push(".bag  — ROS 1 bag            (read)");
+    }
+    list
+}
+
 /// Convert a point cloud file between formats.
 ///
 /// Dispatches reader/writer by file extension.  When `target_epsg` is
@@ -91,22 +134,12 @@ pub fn convert(
     output: &Path,
     target_epsg: Option<u32>,
 ) -> std::result::Result<(), RubipontError> {
-    let out_ext = extension(output);
-
     let mut reader = create_reader(input)?;
 
     let layout = reader.layout().clone();
     let meta = reader.metadata().clone();
 
-    let mut writer: Box<dyn PointCloudWriter> = match out_ext {
-        e if format::las::detect(e) => Box::new(format::las::LasWriter::new(output, &layout, &meta)?),
-        e if format::laz::detect(e) => Box::new(format::laz::LazWriter::new(output, &layout, &meta)?),
-        e if format::pcd::detect(e) => Box::new(format::pcd::PcdWriter::new(output, &layout, &meta)?),
-        e if format::e57::detect(e) => Box::new(format::e57::E57WriterImpl::new(output, &layout, &meta)?),
-        #[cfg(feature = "mcap-io")]
-        e if format::mcap::detect(e) => Box::new(format::mcap::McapWriterImpl::new(output, &layout, &meta)?),
-        _ => return Err(RubipontError::UnsupportedFormat(out_ext.into())),
-    };
+    let mut writer = create_writer(output, &layout, &meta)?;
 
     while let Some(chunk) = reader.read_chunk()? {
         if let Some(tgt_epsg) = target_epsg {

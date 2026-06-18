@@ -18,14 +18,10 @@ fn info(path: String) -> PyResult<String> {
 /// List supported formats.
 #[pyfunction]
 fn formats() -> Vec<String> {
-    vec![
-        ".las  — ASPRS LAS 1.2 (read/write)".into(),
-        ".laz  — Compressed LAS (read/write)".into(),
-        ".pcd  — Point Cloud Data (read/write)".into(),
-        ".e57  — ASTM E57 (read/write)".into(),
-        #[cfg(feature = "mcap-io")]
-        ".mcap — ROS 2 MCAP (read)".into(),
-    ]
+    rubipont_core::pipeline::formats_list()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// Python module definition.

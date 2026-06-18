@@ -55,14 +55,9 @@ fn main() {
         }
         Commands::Formats => {
             println!("Supported formats:");
-            println!("  .las  — ASPRS LAS 1.2/1.4 (read/write)");
-            println!("  .laz  — Compressed LAS       (read/write)");
-            println!("  .pcd  — Point Cloud Data     (read/write)");
-            println!("  .e57  — ASTM E57             (read/write)");
-            #[cfg(feature = "mcap-io")]
-            println!("  .mcap — ROS 2 MCAP           (read/write)");
-            #[cfg(feature = "mcap-io")]
-            println!("  .bag  — ROS 1 bag            (read)");
+            for fmt in rubipont_core::pipeline::formats_list() {
+                println!("  {fmt}");
+            }
         }
     }
 }
