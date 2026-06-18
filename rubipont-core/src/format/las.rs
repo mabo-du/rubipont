@@ -12,6 +12,9 @@ pub fn detect(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("las")
 }
 
+/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
+const INTERNAL_POINT_SIZE: usize = 26;
+
 pub struct LasReader {
     las_reader: las::Reader,
     layout: PointLayout,
@@ -30,7 +33,12 @@ impl LasReader {
         let header = las_reader.header().clone();
 
         let layout = PointLayout {
-            point_size: header.point_format().len() as usize,
+            // point_size describes the internal chunk format, not the on-disk
+            // LAS format.  The reader always produces 26-byte records regardless
+            // of the source format's point record length.  The pipeline
+            // (pipeline.rs) strides point data using this value, so reporting
+            // the on-disk size would cause misaligned reads when reprojecting.
+            point_size: INTERNAL_POINT_SIZE,
             num_points: header.number_of_points(),
             has_integer_coords: true,
         };

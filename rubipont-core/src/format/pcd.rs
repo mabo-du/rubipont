@@ -175,7 +175,10 @@ impl PcdReader {
             num_points,
             points_read: 0,
             layout: PointLayout {
-                point_size: total_point_size,
+                // Reports the internal chunk stride (26 bytes), not the
+                // source PCD record size.  The reader packs points into the
+                // internal format regardless of the file's FIELD layout.
+                point_size: INTERNAL_POINT_SIZE,
                 num_points,
                 has_integer_coords: false,
             },
