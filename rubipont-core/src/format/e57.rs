@@ -1,7 +1,7 @@
-use std::io::{BufReader, Read, Seek};
+use std::io::{Read, Seek};
 use std::path::Path;
 
-use e57::{CartesianCoordinate, E57Reader, PointCloud};
+use e57::{CartesianCoordinate, E57Reader};
 
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
@@ -13,18 +13,33 @@ pub fn detect(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("e57")
 }
 
-pub struct E57ReaderImpl<T: Read + Seek> {
-    reader: E57Reader<T>,
+/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
+const INTERNAL_POINT_SIZE: usize = 26;
+
+pub struct E57ReaderImpl {
+    /// All points buffered in the internal 26-byte format
+    data: Vec<u8>,
+    /// Bytes consumed so far (for chunked reading)
+    consumed: usize,
     layout: PointLayout,
     metadata: PipelineContext,
-    pc_index: usize,
-    points_read: u64,
     exhausted: bool,
 }
 
-impl<T: Read + Seek> E57ReaderImpl<T> {
+impl E57ReaderImpl {
+    /// Open an E57 file from a filesystem path.
+    pub fn new(path: &Path) -> Result<Self> {
+        let reader = E57Reader::from_file(path).map_err(|e| RubipontError::ParseError {
+            format: "E57".into(),
+            offset: 0,
+            detail: e.to_string(),
+        })?;
+
+        Self::from_e57_reader(reader)
+    }
+
     /// Create a new E57 reader from a generic reader.
-    pub fn from_reader(reader: T) -> Result<Self> {
+    pub fn from_reader(reader: impl Read + Seek) -> Result<Self> {
         let e57_reader = E57Reader::new(reader).map_err(|e| RubipontError::ParseError {
             format: "E57".into(),
             offset: 0,
@@ -34,7 +49,7 @@ impl<T: Read + Seek> E57ReaderImpl<T> {
         Self::from_e57_reader(e57_reader)
     }
 
-    fn from_e57_reader(reader: E57Reader<T>) -> Result<Self> {
+    fn from_e57_reader(mut reader: E57Reader<impl Read + Seek>) -> Result<Self> {
         let pointclouds = reader.pointclouds();
 
         if pointclouds.is_empty() {
@@ -59,99 +74,24 @@ impl<T: Read + Seek> E57ReaderImpl<T> {
         // Extract CRS metadata if available
         let crs_wkt = reader.coordinate_metadata().map(|s| s.to_string());
 
-        let metadata = PipelineContext {
-            crs_wkt,
-            ..Default::default()
-        };
-
-        let layout = PointLayout {
-            point_size: 26, // 3×f64 (24 bytes) + u16 (2 bytes) = 26 bytes internal format
-            num_points,
-            has_integer_coords: false,
-        };
-
-        Ok(Self {
-            reader,
-            layout,
-            metadata,
-            pc_index: 0,
-            points_read: 0,
-            exhausted: false,
-        })
-    }
-}
-
-impl E57ReaderImpl<BufReader<std::fs::File>> {
-    /// Open an E57 file from a filesystem path.
-    pub fn new(path: &Path) -> Result<Self> {
-        let reader = E57Reader::from_file(path).map_err(|e| RubipontError::ParseError {
-            format: "E57".into(),
-            offset: 0,
-            detail: e.to_string(),
-        })?;
-
-        Self::from_e57_reader(reader)
-    }
-}
-
-impl<T: Read + Seek> PointCloudReader for E57ReaderImpl<T> {
-    fn read_chunk(&mut self) -> Result<Option<PointChunk>> {
-        if self.exhausted {
-            return Ok(None);
-        }
-
-        // Get the first point cloud descriptor
-        let pcs = self.reader.pointclouds();
-        let pc: &PointCloud = match pcs.get(self.pc_index) {
-            Some(pc) => pc,
-            None => {
-                self.exhausted = true;
-                return Ok(None);
-            }
-        };
-
-        // Create a fresh iterator each time (the iterator borrows self.reader mutably,
-        // so it must be created and consumed within this method)
-        let mut iter = self
-            .reader
+        // Buffer all points eagerly.  The e57 crate's iterator borrows the
+        // reader mutably, making self-referential iterator storage impossible
+        // in safe Rust.  Rather than re-creating the iterator and re-skipping
+        // every point on each read_chunk() call (O(n²) for the full file),
+        // we read every point once and store the internal-format bytes.
+        let mut data = Vec::with_capacity(num_points as usize * INTERNAL_POINT_SIZE);
+        let mut iter = reader
             .pointcloud_simple(pc)
             .map_err(|e| RubipontError::ParseError {
                 format: "E57".into(),
-                offset: self.points_read,
+                offset: 0,
                 detail: e.to_string(),
             })?;
 
-        // Skip already-read points
-        for _ in 0..self.points_read {
-            match iter.next() {
-                Some(Ok(_)) => {}
-                Some(Err(e)) => {
-                    return Err(RubipontError::ParseError {
-                        format: "E57".into(),
-                        offset: self.points_read,
-                        detail: e.to_string(),
-                    });
-                }
-                None => {
-                    self.exhausted = true;
-                    return Ok(None);
-                }
-            }
-        }
-
-        // Read up to CHUNK_SIZE points
-        const CHUNK_SIZE: usize = 4096;
-        let mut data = Vec::with_capacity(CHUNK_SIZE * 26);
-        let mut count = 0usize;
-
-        for pt_result in iter {
-            if count >= CHUNK_SIZE {
-                break;
-            }
-
+        for pt_result in &mut iter {
             let pt = pt_result.map_err(|e| RubipontError::ParseError {
                 format: "E57".into(),
-                offset: self.points_read + count as u64,
+                offset: 0,
                 detail: e.to_string(),
             })?;
 
@@ -177,22 +117,58 @@ impl<T: Read + Seek> PointCloudReader for E57ReaderImpl<T> {
             data.extend_from_slice(&y.to_le_bytes());
             data.extend_from_slice(&z.to_le_bytes());
             data.extend_from_slice(&intensity.to_le_bytes());
-
-            count += 1;
         }
 
-        self.points_read += count as u64;
+        let total_points = data.len() / INTERNAL_POINT_SIZE;
 
-        if count == 0 {
+        let layout = PointLayout {
+            point_size: INTERNAL_POINT_SIZE,
+            num_points: total_points as u64,
+            has_integer_coords: false,
+        };
+
+        Ok(Self {
+            data,
+            consumed: 0,
+            layout,
+            metadata: PipelineContext {
+                crs_wkt,
+                ..Default::default()
+            },
+            exhausted: false,
+        })
+    }
+}
+
+impl PointCloudReader for E57ReaderImpl {
+    fn read_chunk(&mut self) -> Result<Option<PointChunk>> {
+        if self.exhausted {
+            return Ok(None);
+        }
+
+        let remaining_bytes = self.data.len().saturating_sub(self.consumed);
+        if remaining_bytes == 0 {
             self.exhausted = true;
             return Ok(None);
         }
 
-        if self.points_read >= pc.records {
+        const CHUNK_SIZE: usize = 4096;
+        let chunk_points = (remaining_bytes / INTERNAL_POINT_SIZE).min(CHUNK_SIZE);
+        let chunk_bytes = chunk_points * INTERNAL_POINT_SIZE;
+        let start = self.consumed;
+        let end = start + chunk_bytes;
+
+        let chunk_data = self.data[start..end].to_vec();
+
+        self.consumed += chunk_bytes;
+        if self.consumed >= self.data.len() {
             self.exhausted = true;
         }
 
-        Ok(Some(PointChunk { data, len: count }))
+        Ok(Some(PointChunk {
+            data: chunk_data,
+            len: chunk_points,
+        }))
     }
 
     fn layout(&self) -> &PointLayout {
@@ -231,7 +207,7 @@ impl E57WriterImpl {
 
 impl PointCloudWriter for E57WriterImpl {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
-        let point_size = 26usize;
+        let point_size = INTERNAL_POINT_SIZE;
         for i in 0..chunk.len {
             let offset = i * point_size;
             let x = f64::from_le_bytes(read_array(&chunk.data, offset)?);
