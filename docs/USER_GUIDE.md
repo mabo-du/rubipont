@@ -1,5 +1,7 @@
 # rubipont User Guide
 
+**Version:** v0.1.3 (see [CHANGELOG](../CHANGELOG.md))
+
 ## Table of Contents
 
 1. [Introduction](#introduction)
@@ -9,7 +11,7 @@
 5. [Conversion Workflows](#conversion-workflows)
 6. [Metadata Handling](#metadata-handling)
 7. [CRS Transformation](#crs-transformation)
-8. [Performance](#performance)
+8. [Performance & Memory](#performance--memory)
 9. [Troubleshooting](#troubleshooting)
 10. [Python API](#python-api)
 
@@ -20,9 +22,9 @@
 rubipont translates point cloud data between formats used in geospatial surveying (LAS/LAZ), terrestrial laser scanning (E57), robotics (PCD, ROS bag/MCAP), and machine learning (PCD). It preserves metadata across conversions, strips alignment padding from ROS data, and provides optional coordinate reprojection.
 
 **Core design principles:**
-- **Lossless**: no point discarded, no metadata silently dropped
-- **Memory-efficient**: memory-mapped I/O for large files; bounded buffers for compressed formats
-- **Metadata-preserving**: WKT CRS survives E57 ↔ LAS 1.4 round-trips; sidecar files for formats that cannot embed it
+- **Lossless**: no point discarded, no metadata silently dropped; missing or malformed data returns explicit errors
+- **Correctness-first**: big-endian ROS data is byte-swapped, NaN points filtered when `is_dense=0`, zero `point_step` rejected as corrupt
+- **Metadata-preserving**: WKT CRS survives E57 ↔ LAS 1.4 and LAZ round-trips; sidecar files for formats that cannot embed it
 
 ---
 
@@ -31,7 +33,7 @@ rubipont translates point cloud data between formats used in geospatial surveyin
 ### From Source
 
 ```bash
-git clone https://github.com/your-org/rubipont
+git clone https://github.com/mabo-du/rubipont
 cd rubipont
 cargo build --release --workspace
 ```
@@ -103,7 +105,7 @@ rp convert input.las output.pcd --target-crs 3857
 
 ### `rp info <input>`
 
-Display metadata about a point cloud file.
+Display metadata about a point cloud file, including CRS when available.
 
 ```bash
 $ rp info scan.las
@@ -113,6 +115,7 @@ Point size: 26 bytes
 Integer coords: true
 Scale: (0.01, 0.01, 0.01)
 Offset: (500000, 6000000, 0)
+CRS: GEOGCS["WGS 84",DATUM["WGS_1984",...]]
 ```
 
 ### `rp formats`
@@ -122,13 +125,12 @@ List all supported formats with read/write capability.
 ```bash
 $ rp formats
 Supported formats:
-  .las  — ASPRS LAS 1.2 (read/write)
-  .laz  — Compressed LAS (read/write)
-  .pcd  — Point Cloud Data (read/write)
-  .e57  — ASTM E57 (read/write)
-  .mcap — ROS 2 MCAP (read/write)*
-  .bag  — ROS 1 bag (read)*
-* Requires mcap-io feature
+  .las  — ASPRS LAS 1.2/1.4 (read/write)
+  .laz  — Compressed LAS       (read/write)
+  .pcd  — Point Cloud Data     (read/write)
+  .e57  — ASTM E57             (read/write)
+  .mcap — ROS 2 MCAP           (read/write)
+  .bag  — ROS 1 bag            (read)
 ```
 
 ---
@@ -146,11 +148,11 @@ The ASPRS LAS format is the standard for airborne and terrestrial geospatial LiD
 | Point formats 6–10 (LAS 1.4) | ✅ Read |
 | VLRs | ✅ Read (passthrough) |
 | EVLRs | ✅ Read (passthrough) |
-| WKT CRS | ✅ Read/write (LAS 1.4) |
+| WKT CRS | ✅ Read/write (LAS 1.4 EVLRs) |
 | Coordinate scale/offset | ✅ Preserved in round-trip |
 | Classification | ✅ Read (passthrough) |
 
-**Note:** Internal representation uses f64 XYZ + u16 intensity. Additional fields (GPS time, RGB, NIR) are read but not written in the current version.
+**Note:** Internal representation uses f64 XYZ + u16 intensity (26 bytes per point). Additional fields (GPS time, RGB, NIR, return number) are read but not written in the current version. The v0.3.0 PointBatch migration (see `docs/adr/001-internal-point-format.md`) will address this.
 
 ### LAZ
 
@@ -158,9 +160,10 @@ Lossless LAS compression. Uses the laszip algorithm with predictive coding and a
 
 | Feature | Support |
 |---|---|
-| Decompression | ✅ Sequential and parallel |
-| Compression | ✅ Single-threaded |
-| LAS 1.4 compatibility mode | ✅ Read |
+| Decompression | ✅ Sequential (chunked streaming, ~50K points per chunk) |
+| Compression | ✅ Single-threaded (chunked) |
+| LAS 1.4 compatibility | ✅ Read/write (header patching for compressed bit) |
+| WKT CRS preservation | ✅ CRS extracted from EVLRs on read, embedded on write |
 | Chunked random access | ✅ Via laz crate |
 
 ### PCD
@@ -169,12 +172,11 @@ Point Cloud Library format used in robotics and computer vision.
 
 | Feature | Support |
 |---|---|
-| DATA ascii | ✅ Read/write |
+| DATA ascii | ✅ Read/write (non-numeric tokens return `ParseError`) |
 | DATA binary | ✅ Read/write |
-| DATA binary_compressed | ✅ Read/write |
-| LZF decompression | ✅ |
-| SoA transposition | ✅ Automatic |
-| VIEWPOINT | ✅ Read (sidecar on write) |
+| DATA binary_compressed | ✅ Read/write (LZF decompression, SoA transposition) |
+| VIEWPOINT | ✅ Read (sidecar `.meta.json` on write) |
+| Point count safety | ✅ Header WIDTH/POINTS written from actual count in `finalize()` |
 
 ### E57
 
@@ -188,7 +190,7 @@ ASTM E2807 standard for terrestrial laser scanning.
 | Colour (RGB) | ✅ Read |
 | Multi-scan files | ✅ Read (first scan; warns about others) |
 | CRS (WKT) | ✅ Read/write |
-| Images2D | Read (available via crate) |
+| Performance | ✅ All points buffered on construction (O(n) single-pass read) |
 
 ### ROS 2 MCAP
 
@@ -196,12 +198,14 @@ Modern robotics container format (Foxglove).
 
 | Feature | Support |
 |---|---|
-| LZ4 chunk compression | ✅ |
-| Zstd chunk compression | ✅ |
+| Input safety | ✅ File read into `Vec<u8>` (no mmap — avoids SIGBUS on truncated files) |
+| LZ4 chunk compression | ✅ (via `mcap` crate) |
+| Zstd chunk compression | ✅ (via `mcap` crate) |
 | Channel/topic filtering | ✅ (topics containing "points" or "lidar") |
-| CDR encapsulation | ✅ (4-byte header stripped automatically) |
-| Eigen padding stripping | ✅ (reads only valid field bytes) |
-| Trailing index seeking | ✅ (via mcap crate) |
+| CDR encapsulation | ✅ (4-byte header stripped automatically via shared parser) |
+| Big-endian data | ✅ Bytes swapped on read when `is_bigendian=1` |
+| PointCloud2 validation | ✅ Reports `ParseError` on zero `point_step`, missing XYZ fields |
+| Write compression | None (output is uncompressed) — improvement planned |
 
 ### ROS 1 Bag
 
@@ -210,9 +214,10 @@ Legacy robotics logging format.
 | Feature | Support |
 |---|---|
 | bz2 chunk decompression | ✅ |
-| PointCloud2 extraction | ✅ |
-| Topic filtering | ✅ (topics containing "points" or "lidar") |
-| Eigen padding stripping | ✅ |
+| PointCloud2 extraction | ✅ (shared parser, no CDR header) |
+| Big-endian data | ✅ Bytes swapped on read when `is_bigendian=1` |
+| Topic filtering | ✅ (topics containing "points" or "lidar"; falls back to type‑based filtering) |
+| Write | — (read only) |
 
 ---
 
@@ -257,12 +262,13 @@ $ rp info roundtrip.las
 
 ### What Gets Preserved
 
-| Metadata | LAS 1.4 | E57 | PCD | MCAP |
-|---|---|---|---|---|
-| Coordinate scale/offset | ✅ Native | — | — | — |
-| WKT CRS | ✅ EVLR | ✅ XML | 📎 Sidecar | — |
-| VIEWPOINT | — | — | 📎 Sidecar | — |
-| Intensity | ✅ | ✅ | ✅ | ✅ |
+| Metadata | LAS 1.4 | LAZ | E57 | PCD | MCAP |
+|---|---|---|---|---|---|
+| Coordinate scale/offset | ✅ Native | ✅ Native | — | — | — |
+| WKT CRS | ✅ EVLR | ✅ EVLR | ✅ XML | 📎 Sidecar | — |
+| VIEWPOINT | — | — | — | 📎 Sidecar | — |
+| XYZ (f64) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Intensity (u16) | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 **Legend:** ✅ = embedded natively, 📎 = sidecar JSON file
 
@@ -281,7 +287,7 @@ When converting to a format that cannot embed certain metadata, rubipont writes 
 }
 ```
 
-Sidecar files are created when CRS, coordinate scale/offset, or VIEWPOINT metadata would otherwise be lost.
+Sidecar files are created when CRS, coordinate scale/offset, or VIEWPOINT metadata would otherwise be lost. The v0.3.0 sidecar specification (ADR 001) adds automatic sidecar lookup on read, explicit `--sidecar` override, and `rp info` display of sidecar fields.
 
 ---
 
@@ -312,17 +318,35 @@ rp convert scan.las output.pcd --target-crs 32633
 
 ### How It Works
 
-1. rubipont reads the source file's CRS metadata (WKT string from LAS 1.4 EVLRs or E57 XML)
-2. Extracts the EPSG code from the WKT (e.g., `AUTHORITY["EPSG","4326"]`)
+1. rubipont reads the source file's CRS metadata (WKT string from LAS 1.4 EVLRs, LAZ EVLRs, or E57 XML)
+2. Extracts the EPSG code from the WKT (e.g., `AUTHORITY["EPSG","4326"]`) with fallback for well-known datums
 3. Creates a PROJ transformation object from source EPSG to target EPSG
 4. Applies the transformation to every point's XYZ coordinates during conversion
-5. Writes the target CRS metadata to the output file
+5. Writes the target CRS metadata to the output file (if format supports it)
 
 **Note:** Current implementation performs 2D horizontal transformation. Z values pass through unchanged.
 
 ---
 
-## Performance
+## Performance & Memory
+
+### Memory Profile
+
+| Format | Read memory | Write memory | Notes |
+|---|---|---|---|
+| LAS | ~0 bytes | Streamed | Memory-mapped via `las` crate; points written one at a time |
+| LAZ | ~1.3 MB | ~20 KB | Chunked streaming decompression (50K-point chunks) |
+| PCD binary | ~0 bytes | All points | `BufReader` streams input; output buffered until `finalize()` |
+| PCD ASCII | ~0 bytes | All points | Line-by-line parsing; output buffered until `finalize()` |
+| E57 | All points | All points | Eagerly buffered on construction (avoids O(n²) re-read) |
+| MCAP | File bytes + all points | All points | File read into `Vec<u8>` then point data extracted |
+| ROS bag | All points + index | N/A | Double-iterates chunk records (connections + messages) |
+
+### Large File Handling
+
+For files > 1 GB:
+- **LAS/LAZ**: chunked streaming — memory is bounded (~1.3 MB buffer for LAZ)
+- **PCD, E57, MCAP, bag**: currently load all point data into memory before or during conversion. For very large E57, MCAP, or PCD files, consider splitting the source file with format-specific tools first. The v0.3.0 PointBatch migration plans to introduce streaming for these formats.
 
 ### Benchmark Results
 
@@ -338,21 +362,6 @@ Three benchmarks measure throughput for 10,000-point datasets:
 | `las_to_pcd_10k` | Convert LAS → PCD binary |
 | `las_to_laz_10k` | Compress LAS → LAZ |
 | `laz_to_las_10k` | Decompress LAZ → LAS |
-
-### Memory Usage
-
-- **Uncompressed formats** (LAS binary PCD): ~0 bytes extra (memory-mapped I/O)
-- **Compressed formats** (LAZ, PCD binary_compressed): ~50K × point_size (~1.3 MB) ring buffer
-- **E57**: buffered; points written atomically in `finalize()`
-- **MCAP/ROS bag**: entire point cloud loaded into memory (current implementation)
-
-### Large File Handling
-
-For files > 1 GB:
-- LAS/PCD use memory-mapped I/O — limited only by virtual address space
-- LAZ uses chunked streaming — decompresses one 50K-point chunk at a time
-- E57 uses paged I/O — reads in page-sized units
-- MCAP uses memory-mapped I/O — OS handles page cache
 
 ---
 
@@ -371,19 +380,33 @@ cargo build --release --features proj
 
 ### MCAP or ROS bag support not available
 
-The `mcap-io` feature was excluded (it is enabled by default). Ensure you didn't use `--no-default-features` unless needed for WASM.
+The `mcap-io` feature was excluded (it is enabled by default). Ensure you didn't use `--no-default-features` unless needed for WASM:
+```bash
+cargo build --release
+```
 
 ### "Parse error" on a valid file
 
-Some LAS files have non-standard headers or formats that the `las` crate cannot parse. Try running `lasinfo` (from LAStools) to validate the file.
+Some LAS files have non-standard headers or formats that the `las` crate cannot parse. Try running `lasinfo` (from LAStools) to validate the file. If you're converting LAZ, ensure the file is a standard laszip-encoded LAZ (the older non-standard LAZ 1.x formats are not supported).
+
+### "point_step is zero — corrupt PointCloud2 message"
+
+This appears when converting a damaged MCAP or ROS bag file. The PointCloud2 message metadata declares a zero point step, which would cause division-by-zero. The source file is corrupt.
+
+### Point coordinates are wrong after --target-crs
+
+This was a bug in v0.1.2 affecting LAS/LAZ readers (see CHANGELOG v0.1.3). If you're still on v0.1.2, upgrade:
+```bash
+git pull && cargo build --release --features proj
+```
 
 ### E57 multi-scan warning
 
-E57 files with multiple point clouds will only read the first scan. Each scan is written as a separate point cloud in the output format when writing E57.
+E57 files with multiple point clouds will only read the first scan.
 
-### Large MCAP files cause high memory usage
+### Large MCAP/bag/E57 files cause high memory usage
 
-The current MCAP reader loads all matching messages into memory before conversion. For very large files (> 10 GB), consider using the `mcap` CLI to filter first:
+Current MCAP/bag/E57 readers load all matching messages into memory before conversion. For very large MCAP files, consider using the `mcap` CLI to filter first:
 ```bash
 mcap filter input.mcap -o filtered.mcap --topics /points2
 rp convert filtered.mcap output.laz
@@ -401,7 +424,7 @@ import rubipont
 # Convert a file between formats
 rubipont.convert("input.las", "output.pcd")
 
-# Get file metadata
+# Get file metadata (includes CRS when available)
 info = rubipont.info("scan.las")
 # Returns a string containing:
 #   File: scan.las
@@ -410,15 +433,17 @@ info = rubipont.info("scan.las")
 #   Integer coords: true
 #   Scale: (0.01, 0.01, 0.01)
 #   Offset: (500000, 6000000, 0)
+#   CRS: GEOGCS["WGS 84",...]
 
 # List supported formats
 formats = rubipont.formats()
 # Returns:
-#   ['.las  — ASPRS LAS 1.2 (read/write)',
-#    '.laz  — Compressed LAS (read/write)',
-#    '.pcd  — Point Cloud Data (read/write)',
-#    '.e57  — ASTM E57 (read/write)',
-#    '.mcap — ROS 2 MCAP (read)']
+#   ['.las  — ASPRS LAS 1.2/1.4 (read/write)',
+#    '.laz  — Compressed LAS       (read/write)',
+#    '.pcd  — Point Cloud Data     (read/write)',
+#    '.e57  — ASTM E57             (read/write)',
+#    '.mcap — ROS 2 MCAP           (read/write)',
+#    '.bag  — ROS 1 bag            (read)']
 ```
 
 ### Building the Wheel

@@ -8,40 +8,42 @@ $ rp convert rosbag.mcap archive.laz --target-crs 3857
 $ rp info scan.las
 ```
 
+**Current version:** [v0.1.3](CHANGELOG.md) — see [CHANGELOG](CHANGELOG.md) for full history.
+
 ## Features
 
 ### Supported Formats
 
 | Format | Read | Write | Description |
 |---|---|---|---|
-| **LAS 1.2** | ✅ | ✅ | Geospatial surveying standard |
-| **LAS 1.3/1.4** | ✅ | ✅ | Modern multi-return, WKT CRS, EVLRs |
+| **LAS 1.2–1.4** | ✅ | ✅ | Geospatial surveying standard with WKT CRS, EVLRs |
 | **LAZ** | ✅ | ✅ | Lossless LAS compression (laszip) |
-| **PCD** | ✅ | ✅ | Point Cloud Library format (binary, ASCII, binary_compressed) |
+| **PCD** | ✅ | ✅ | Point Cloud Library (binary, ASCII, binary_compressed) |
 | **E57** | ✅ | ✅ | ASTM terrestrial laser scanning standard |
 | **ROS 2 MCAP** | ✅ | ✅ | Robotic middleware container format |
-| **ROS 1 bag** | ✅ | — | Legacy robotics logging format |
+| **ROS 1 bag** | ✅ | — | Legacy robotics logging format (read only) |
 
 ### Key Capabilities
 
-- **Zero-copy architecture** — memory-mapped I/O for uncompressed formats; bounded ring buffers for compressed formats
-- **Eigen padding stripping** — automatically removes C++ struct alignment padding (up to 65% bloat reduction)
-- **WKT CRS preservation** — coordinate reference system metadata survives E57 ↔ LAS 1.4 round-trips
-- **Sidecar metadata** — `.meta.json` files preserve CRS when target format cannot embed it
+- **Multi-format pipeline** — single command converts between any supported format pair
+- **WKT CRS preservation** — coordinate reference system metadata survives E57 ↔ LAS 1.4 and LAZ round-trips with correct EPSG extraction
 - **CRS transformation** — optional `--target-crs <epsg>` for coordinate reprojection (requires `proj` feature)
+- **Sidecar metadata** — `.meta.json` files preserve CRS / VIEWPOINT when target format cannot embed it
+- **Eigen padding stripping** — automatically removes C++ struct alignment padding (up to 65% bloat reduction)
+- **Shared PointCloud2 parser** — single CDR-encoded `sensor_msgs/PointCloud2` parser for both MCAP and ROS 1 bag (handles big-endian, NaN filtering, missing fields, zero point_step)
 - **Python bindings** — `pip install rubipont` via PyO3 + maturin
-- **WASM support** — browser-compatible build for web-based tooling
+- **WASM build** — browser-compatible build for web-based tooling
 
 ## Quick Start
 
 ### Prerequisites
-- Rust 1.94+ 
+- Rust 1.75+
 - For CRS transformation: PROJ C library (`libproj-dev` on Debian/Ubuntu)
 
 ### Build & Run
 
 ```bash
-git clone https://github.com/your-org/rubipont
+git clone https://github.com/mabo-du/rubipont
 cd rubipont
 
 # Build all crates
@@ -49,6 +51,7 @@ cargo build --workspace
 
 # Run the CLI
 cargo run -p rubipont-cli -- convert input.las output.pcd
+cargo run -p rubipont-cli -- info input.las
 cargo run -p rubipont-cli -- formats
 ```
 
@@ -102,7 +105,7 @@ rp convert vehicle_run.mcap output.laz
 ### Inspecting Files
 
 ```bash
-# Show file metadata
+# Show file metadata (points, point size, CRS, scale/offset)
 rp info survey.las
 
 # Show supported formats
@@ -127,7 +130,7 @@ import rubipont
 # Convert file
 rubipont.convert("scan.las", "cloud.pcd")
 
-# Inspect file
+# Inspect file (includes CRS when available)
 info = rubipont.info("scan.las")
 print(info)
 
@@ -148,15 +151,38 @@ rubipont/
 │   │   ├── pcd.rs                # PCD reader/writer
 │   │   ├── e57.rs                # E57 reader/writer
 │   │   ├── mcap.rs               # ROS 2 MCAP reader/writer
-│   │   └── bag.rs                # ROS 1 bag reader
-│   ├── src/pipeline.rs           # Convert orchestrator + sidecar
-│   ├── src/transform.rs          # CRS transformation
+│   │   ├── bag.rs                # ROS 1 bag reader
+│   │   ├── pointcloud2.rs        # Shared CDR-encoded PointCloud2 parser
+│   │   └── mod.rs                # Module registry
+│   ├── src/pipeline.rs           # Convert orchestrator + dispatch + format_info
+│   ├── src/layout.rs             # PointLayout, PointChunk, PipelineContext
+│   ├── src/transform.rs          # CRS transformation (EPSG extraction + proj)
+│   ├── src/error.rs              # Error types
+│   ├── src/array.rs              # Array read helpers
 │   └── benches/conversion.rs     # Criterion benchmarks
 ├── rubipont-cli/                 # CLI binary (rp)
 ├── rubipont-py/                  # Python bindings (PyO3)
 ├── wasm-demo/                    # WASM demo page
-└── docs/                         # Design specs, research, plans
+├── docs/                         # Design specs, research, ADRs
+│   └── adr/                      # Architecture Decision Records
+│       └── 001-internal-point-format.md
+└── CHANGELOG.md                  # Version history
 ```
+
+## Memory & Performance Notes
+
+| Format | Memory per read | Memory per write |
+|---|---|---|
+| LAS | ~0 bytes (memory-mapped via `las` crate) | Streamed (per-point write via `las` crate) |
+| LAZ | ~50k × 26B ring buffer (chunked streaming) | Per-point compression (chunked) |
+| PCD | ~0 bytes (memory-mapped via `BufReader`) | All points buffered, then written in `finalize()` |
+| E57 | All points buffered in internal format on construction | All points buffered, then written in `finalize()` |
+| MCAP | File read into `Vec<u8>` + point data in internal format | All points buffered, then written in `finalize()` |
+| Bag | All points buffered on construction (doubly iterates chunks) | N/A (read only) |
+
+**Known limitations:**
+- MCAP, bag, E57, and PCD writers currently buffer all points in RAM before writing. Large files (>50M points) may require significant memory. The v0.3.0 PointBatch migration plans to address this with streaming support.
+- Bag reader iterates chunk records twice (connections + messages). Single-pass refactor planned.
 
 ## Licence
 
