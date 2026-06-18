@@ -43,6 +43,11 @@ impl LazReader {
         let offset = (transforms.x.offset, transforms.y.offset, transforms.z.offset);
         let num_points = las_header.number_of_points();
 
+        // Extract WKT CRS (LAS 1.4 EVLRs) before building metadata
+        let crs_wkt = las_header
+            .get_wkt_crs_bytes()
+            .and_then(|wkt_bytes| String::from_utf8(wkt_bytes.to_vec()).ok());
+
         let reader = laz::las::file::SimpleReader::new(file).map_err(|e| {
             RubipontError::ParseError {
                 format: "LAZ".into(),
@@ -65,7 +70,8 @@ impl LazReader {
         let metadata = PipelineContext {
             coordinate_scale: Some(scale),
             coordinate_offset: Some(offset),
-            ..Default::default()
+            las_version: Some((las_header.version().major, las_header.version().minor)),
+            crs_wkt,
         };
 
         Ok(Self {
@@ -204,9 +210,14 @@ impl LazWriter {
             data: vlr_data,
         });
 
-        let header = builder.into_header().map_err(|e| {
+        let mut header = builder.into_header().map_err(|e| {
             RubipontError::Io(std::io::Error::other(e.to_string()))
         })?;
+
+        // Write WKT CRS into EVLRs for LAS 1.4 (same pattern as LasWriter)
+        if let Some(crs_wkt) = &metadata.crs_wkt {
+            header.set_wkt_crs(crs_wkt.as_bytes().to_vec()).ok();
+        }
 
         // Write the LAS header (including VLRs) to the file
         header.write_to(&mut file).map_err(|e| {
