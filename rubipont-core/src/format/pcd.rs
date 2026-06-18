@@ -365,6 +365,10 @@ impl PcdWriter {
 
 impl PointCloudWriter for PcdWriter {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
+        // TODO(v0.3.0): streaming write — currently buffers all point data
+        // in RAM before the header is written.  For 100M-point files this is
+        // ~2.6 GB held in memory.  Replace with seek-back-and-patch or a
+        // double-pass approach during the PointBatch migration.
         self.data.extend_from_slice(&chunk.data);
         self.point_count += chunk.len as u64;
         Ok(())
