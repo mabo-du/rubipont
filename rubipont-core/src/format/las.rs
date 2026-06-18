@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
+use crate::layout::INTERNAL_POINT_SIZE;
 use crate::pipeline::{PointCloudReader, PointCloudWriter};
 use crate::array::read_array;
 
@@ -11,9 +12,6 @@ use crate::array::read_array;
 pub fn detect(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("las")
 }
-
-/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
-const INTERNAL_POINT_SIZE: usize = 26;
 
 pub struct LasReader {
     las_reader: las::Reader,

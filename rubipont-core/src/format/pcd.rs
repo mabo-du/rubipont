@@ -3,15 +3,13 @@ use std::path::Path;
 
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
+use crate::layout::INTERNAL_POINT_SIZE;
 use crate::pipeline::{PointCloudReader, PointCloudWriter};
 
 /// Extension detection — called by the conversion pipeline dispatcher.
 pub fn detect(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("pcd")
 }
-
-/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
-const INTERNAL_POINT_SIZE: usize = 26;
 
 /// Metadata for each field in a PCD file.
 #[derive(Debug, Clone)]
@@ -218,12 +216,27 @@ impl PointCloudReader for PcdReader {
 
                 let vals: Vec<f64> = trimmed
                     .split_whitespace()
-                    .filter_map(|s| s.parse::<f64>().ok())
-                    .collect();
+                    .map(|s| s.parse::<f64>().map_err(|_| RubipontError::ParseError {
+                        format: "PCD".into(),
+                        offset: self.points_read + count as u64,
+                        detail: format!("non-numeric value '{}' in ASCII data", s),
+                    }))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
 
-                let x = *vals.first().unwrap_or(&0.0);
-                let y = *vals.get(1).unwrap_or(&0.0);
-                let z = *vals.get(2).unwrap_or(&0.0);
+                if vals.len() < 3 {
+                    return Err(RubipontError::ParseError {
+                        format: "PCD".into(),
+                        offset: self.points_read + count as u64,
+                        detail: format!(
+                            "expected at least 3 fields (x y z), got {}",
+                            vals.len()
+                        ),
+                    });
+                }
+
+                let x = vals[0];
+                let y = vals[1];
+                let z = vals[2];
                 // TODO(v0.3.0): fabricated intensity — when no 4th column
                 // exists, this synthesises 0u16 which downstream formats
                 // interpret as real data.  PointBatch migration replaces
@@ -330,27 +343,16 @@ impl PointCloudReader for PcdReader {
 }
 
 pub struct PcdWriter {
-    file: std::fs::File,
+    path: std::path::PathBuf,
+    data: Vec<u8>,
     point_count: u64,
 }
 
 impl PcdWriter {
     pub fn new(path: &Path, layout: &PointLayout, _metadata: &PipelineContext) -> Result<Self> {
-        let mut file = std::fs::File::create(path)?;
-        writeln!(file, "VERSION 0.7")?;
-        writeln!(file, "FIELDS x y z intensity")?;
-        writeln!(file, "SIZE 8 8 8 2")?;
-        writeln!(file, "TYPE F F F U")?;
-        writeln!(file, "COUNT 1 1 1 1")?;
-        writeln!(file, "WIDTH {}", layout.num_points)?;
-        writeln!(file, "HEIGHT 1")?;
-        writeln!(file, "VIEWPOINT 0 0 0 1 0 0 0")?;
-        writeln!(file, "POINTS {}", layout.num_points)?;
-        writeln!(file, "DATA binary")?;
-        file.flush()?;
-
         Ok(Self {
-            file,
+            path: path.to_path_buf(),
+            data: Vec::with_capacity(layout.num_points as usize * INTERNAL_POINT_SIZE),
             point_count: 0,
         })
     }
@@ -358,13 +360,25 @@ impl PcdWriter {
 
 impl PointCloudWriter for PcdWriter {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
-        self.file.write_all(&chunk.data)?;
+        self.data.extend_from_slice(&chunk.data);
         self.point_count += chunk.len as u64;
         Ok(())
     }
 
     fn finalize(&mut self) -> Result<()> {
-        self.file.sync_all()?;
+        let mut file = std::fs::File::create(&self.path)?;
+        writeln!(file, "VERSION 0.7")?;
+        writeln!(file, "FIELDS x y z intensity")?;
+        writeln!(file, "SIZE 8 8 8 2")?;
+        writeln!(file, "TYPE F F F U")?;
+        writeln!(file, "COUNT 1 1 1 1")?;
+        writeln!(file, "WIDTH {}", self.point_count)?;
+        writeln!(file, "HEIGHT 1")?;
+        writeln!(file, "VIEWPOINT 0 0 0 1 0 0 0")?;
+        writeln!(file, "POINTS {}", self.point_count)?;
+        writeln!(file, "DATA binary")?;
+        file.write_all(&self.data)?;
+        file.sync_all()?;
         Ok(())
     }
 }

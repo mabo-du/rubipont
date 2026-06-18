@@ -1,5 +1,10 @@
 // rubipont-core memory layout helpers
 
+/// Internal point size used throughout rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes).
+/// All readers produce points in this format regardless of the source format's
+/// on-disk record size.  The pipeline strides point data using this value.
+pub const INTERNAL_POINT_SIZE: usize = 26;
+
 /// Layout description for a point cloud in memory
 #[derive(Clone)]
 pub struct PointLayout {

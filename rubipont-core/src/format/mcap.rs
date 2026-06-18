@@ -3,15 +3,13 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
+use crate::layout::INTERNAL_POINT_SIZE;
 use crate::pipeline::{PointCloudReader, PointCloudWriter};
 
 /// Extension detection — called by the conversion pipeline dispatcher.
 pub fn detect(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("mcap")
 }
-
-/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
-const INTERNAL_POINT_SIZE: usize = 26;
 
 pub struct McapReader {
     /// Raw point data as (x, y, z, intensity) stored in a flat Vec.

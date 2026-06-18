@@ -5,6 +5,7 @@ use e57::{CartesianCoordinate, E57Reader};
 
 use crate::error::{Result, RubipontError};
 use crate::layout::{PointChunk, PipelineContext, PointLayout};
+use crate::layout::INTERNAL_POINT_SIZE;
 use crate::pipeline::{PointCloudReader, PointCloudWriter};
 use crate::array::read_array;
 
@@ -12,9 +13,6 @@ use crate::array::read_array;
 pub fn detect(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("e57")
 }
-
-/// Internal point size used by rubipont-core: 3×f64 (24 bytes) + u16 (2 bytes)
-const INTERNAL_POINT_SIZE: usize = 26;
 
 pub struct E57ReaderImpl {
     /// All points buffered in the internal 26-byte format
@@ -207,9 +205,8 @@ impl E57WriterImpl {
 
 impl PointCloudWriter for E57WriterImpl {
     fn write_chunk(&mut self, chunk: &PointChunk) -> Result<()> {
-        let point_size = INTERNAL_POINT_SIZE;
         for i in 0..chunk.len {
-            let offset = i * point_size;
+            let offset = i * INTERNAL_POINT_SIZE;
             let x = f64::from_le_bytes(read_array(&chunk.data, offset)?);
             let y = f64::from_le_bytes(read_array(&chunk.data, offset + 8)?);
             let z = f64::from_le_bytes(read_array(&chunk.data, offset + 16)?);
