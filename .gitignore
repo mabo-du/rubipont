@@ -2,3 +2,47 @@ target/
 *.pyc
 __pycache__/
 *.egg-info/
+# ---- mabo-du mirror cleanup block (added June 2026) ----
+# Mirrors .gitignore patterns from mabo-du/lens to prevent local agent,
+# IDE, and planning files from being re-tracked on public mirrors.
+
+# Agent / IDE caches
+.charter/
+.agents/
+.beads/
+.claude/
+.ctx/
+.gitnexus/
+.windsurf/
+.aidevops.json
+.cursor/cache/
+.hk/
+
+# Local admin + planning scratch
+.gh_admin_org_setup.md
+gh_admin*.md
+TODO.md~
+
+# Backup / lock / draft files
+*~
+*.bak
+*.orig
+
+# Project scope drafts
+docs/scope.md
+docs/SCOPE.md
+docs/Scope.md
+
+# Local research prompts + screenshots
+docs/research-prompts/
+docs/assets/screenshots/
+
+# Screenshot capture scripts
+scripts/lens-screenshots.mjs
+
+# Screenshot images (any depth)
+**/screenshot*.png
+**/screenshot*.jpg
+**/Screenshot*.png
+**/Screenshot*.jpg
+# ---- end mabo-du mirror block ----
